@@ -52,85 +52,146 @@ print("\n" + "="*60)
 print("EXTRACTING DATA")
 print("="*60)
 
-# Extract force data (assuming similar structure to forces.mat)
-# forces_periodic.mat should contain edge list and force values
+# Extract force data
+# Format: [num_contacts, columns] where columns are:
+# timestep#, particle_ID1, particle_ID2, contact_x, contact_y, contact_z, 
+# delta, delta_t, normal_force_mag, tangential_force_mag, 
+# normal_force_unit_vector (3 components), tangential_force_unit_vector (3 components)
 forces_key = [k for k in forces_data.keys() if not k.startswith('__')][0]
 forces = forces_data[forces_key]
 print(f"Forces data shape: {forces.shape}")
-print(f"Forces data type: {forces.dtype}")
+print(f"  Columns: timestep, pid1, pid2, cx, cy, cz, delta, delta_t, n_force, t_force, n_unit(3), t_unit(3)")
+print(f"  Note: Negative particle ID indicates wall contact")
 
-# Extract position data  
+# Extract position data: [num_particles, 3] for x, y, z
 pos_key = [k for k in pos_data.keys() if not k.startswith('__')][0]
 positions = pos_data[pos_key]
 print(f"Positions shape: {positions.shape}")
+print(f"  Columns: x, y, z")
 
-# Extract stresses data
+# Extract stresses data: [num_particles, 6] for e11, e22, e33, e23, e13, e12
 stress_key = [k for k in stresses_data.keys() if not k.startswith('__')][0]
 stresses = stresses_data[stress_key]
 print(f"Stresses shape: {stresses.shape}")
+print(f"  Columns: e11, e22, e33, e23, e13, e12")
 
-# === Build Graph ===
+# === Build Graphs (Full with walls and Core without walls) ===
 print("\n" + "="*60)
-print("BUILDING GRAPH")
+print("BUILDING GRAPHS")
 print("="*60)
 
 t_start = time.time()
 
-G = nx.Graph()
+# Create FULL graph (includes wall contacts)
+G_full = nx.Graph()
 
-# Add nodes with positions
+# Add particle nodes with positions and stress tensors
 num_particles = positions.shape[0]
 print(f"Number of particles: {num_particles}")
 
 for i in range(num_particles):
-    # Assuming positions is [N, 3] for x, y, z
-    if positions.shape[1] >= 3:
-        x, y, z = positions[i, 0], positions[i, 1], positions[i, 2]
-    else:
-        x, y = positions[i, 0], positions[i, 1]
-        z = 0.0
+    x, y, z = positions[i, 0], positions[i, 1], positions[i, 2]
     
-    # Add node attributes
-    G.add_node(i, 
-               x=float(x), 
-               y=float(y), 
-               z=float(z),
-               pos=(float(x), float(y), float(z)))
+    # Extract stress tensor components: e11, e22, e33, e23, e13, e12
+    s11, s22, s33, s23, s13, s12 = stresses[i, 0], stresses[i, 1], stresses[i, 2], \
+                                    stresses[i, 3], stresses[i, 4], stresses[i, 5]
     
-    # Add stress if available
-    if i < stresses.shape[0]:
-        # Assuming stress is scalar or first component
-        if stresses.ndim == 1:
-            stress_val = stresses[i]
+    # Compute derived stress quantities
+    hydro = (s11 + s22 + s33) / 3.0  # Hydrostatic stress
+    vm = np.sqrt(0.5*((s11-s22)**2 + (s22-s33)**2 + (s33-s11)**2) + 
+                 3*(s12**2 + s13**2 + s23**2))  # Von Mises stress
+    
+    G_full.add_node(i,
+                   position=(float(x), float(y), float(z)),
+                   x=float(x), y=float(y), z=float(z),
+                   is_wall=False,
+                   stress_11=float(s11), stress_22=float(s22), stress_33=float(s33),
+                   stress_23=float(s23), stress_13=float(s13), stress_12=float(s12),
+                   stress_vm=float(vm), stress_hydro=float(hydro))
+
+print(f"✓ Added {G_full.number_of_nodes()} particle nodes")
+
+# Add edges and wall nodes from force data
+# Format: timestep, pid1, pid2, cx, cy, cz, delta, delta_t, n_force, t_force, n_unit(3), t_unit(3)
+wall_node_counter = 0
+wall_pid_map = {}
+
+def get_node_id(pid, contact_idx, which_pid):
+    """Handle wall contacts: negative particle ID creates wall node."""
+    global wall_node_counter
+    if pid < 0:
+        key = (contact_idx, which_pid, pid)
+        if key not in wall_pid_map:
+            wall_id = f"wall_{wall_node_counter}"
+            wall_pid_map[key] = wall_id
+            wall_node_counter += 1
         else:
-            stress_val = stresses[i, 0] if stresses.shape[1] > 0 else 0.0
-        G.nodes[i]['stress'] = float(stress_val)
+            wall_id = wall_pid_map[key]
+        
+        if wall_id not in G_full:
+            G_full.add_node(wall_id, is_wall=True, wall_label=int(pid))
+        return wall_id
+    return int(pid)
 
-print(f"✓ Added {G.number_of_nodes()} nodes")
+print(f"\nProcessing {forces.shape[0]} contacts...")
+num_wall_contacts = 0
+num_particle_contacts = 0
 
-# Add edges with forces
-# Assuming forces contains [node1, node2, force_magnitude] or similar structure
-print(f"\nProcessing edges from forces data...")
+for contact_idx in range(forces.shape[0]):
+    row = forces[contact_idx]
+    # timestep = row[0]  # Not used in graph
+    pid1 = int(row[1])
+    pid2 = int(row[2])
+    
+    node1 = get_node_id(pid1, contact_idx, 'pid1')
+    node2 = get_node_id(pid2, contact_idx, 'pid2')
+    
+    if node1 in G_full and node2 in G_full:
+        # Extract contact attributes
+        contact_loc = (float(row[3]), float(row[4]), float(row[5]))
+        delta = float(row[6])
+        delta_t = float(row[7])
+        normal_force = float(row[8])
+        tangential_force = float(row[9])
+        n_unit = (float(row[10]), float(row[11]), float(row[12]))
+        t_unit = (float(row[13]), float(row[14]), float(row[15]))
+        
+        # Calculate angle with z-axis
+        angle_deg = np.degrees(np.arccos(np.abs(np.clip(n_unit[2], -1.0, 1.0))))
+        
+        # Check if this is a wall contact
+        is_wall_contact = G_full.nodes[node1].get('is_wall', False) or \
+                         G_full.nodes[node2].get('is_wall', False)
+        
+        G_full.add_edge(node1, node2,
+                       contact_location=contact_loc,
+                       delta=delta,
+                       delta_t=delta_t,
+                       normal_force=normal_force,
+                       tangential_force=tangential_force,
+                       n_unit=n_unit,
+                       t_unit=t_unit,
+                       angle_with_zz=angle_deg,
+                       is_wall_contact=is_wall_contact)
+        
+        if is_wall_contact:
+            num_wall_contacts += 1
+        else:
+            num_particle_contacts += 1
 
-if forces.ndim == 2:
-    if forces.shape[1] >= 3:
-        # Format: [node1, node2, force_x, force_y, force_z] or [node1, node2, force]
-        for i in range(forces.shape[0]):
-            node1 = int(forces[i, 0])
-            node2 = int(forces[i, 1])
-            
-            # Calculate force magnitude
-            if forces.shape[1] >= 5:  # Has x, y, z components
-                fx, fy, fz = forces[i, 2], forces[i, 3], forces[i, 4]
-                force_mag = np.sqrt(fx**2 + fy**2 + fz**2)
-            else:  # Just magnitude
-                force_mag = forces[i, 2]
-            
-            # Add edge
-            if node1 < num_particles and node2 < num_particles:
-                G.add_edge(node1, node2, force=float(force_mag))
+print(f"✓ Added {G_full.number_of_edges()} total edges")
+print(f"  - Particle-particle contacts: {num_particle_contacts}")
+print(f"  - Wall contacts: {num_wall_contacts}")
+print(f"  - Wall nodes created: {wall_node_counter}")
 
-print(f"✓ Added {G.number_of_edges()} edges")
+# Create CORE graph (particles only, no walls)
+G_core = G_full.copy()
+wall_nodes = [n for n, d in G_core.nodes(data=True) if d.get('is_wall', False)]
+G_core.remove_nodes_from(wall_nodes)
+
+print(f"\n✓ Core graph (no walls):")
+print(f"  - Nodes: {G_core.number_of_nodes()}")
+print(f"  - Edges: {G_core.number_of_edges()}")
 
 timing['graph_construction'] = time.time() - t_start
 print(f"\n✓ Graph construction completed in {timing['graph_construction']:.2f}s")
@@ -142,73 +203,91 @@ print("="*60)
 
 t_start = time.time()
 
-print(f"Nodes: {G.number_of_nodes()}")
-print(f"Edges: {G.number_of_edges()}")
-print(f"Density: {nx.density(G):.4f}")
-print(f"Connected: {nx.is_connected(G)}")
+print("\nFULL GRAPH (with walls):")
+print(f"  Nodes: {G_full.number_of_nodes()}")
+print(f"  Edges: {G_full.number_of_edges()}")
+print(f"  Density: {nx.density(G_full):.4f}")
+print(f"  Connected: {nx.is_connected(G_full)}")
 
-if nx.is_connected(G):
-    print(f"Average shortest path: {nx.average_shortest_path_length(G):.2f}")
-    print(f"Diameter: {nx.diameter(G)}")
+print("\nCORE GRAPH (particles only):")
+print(f"  Nodes: {G_core.number_of_nodes()}")
+print(f"  Edges: {G_core.number_of_edges()}")
+print(f"  Density: {nx.density(G_core):.4f}")
+print(f"  Connected: {nx.is_connected(G_core)}")
+
+if nx.is_connected(G_core):
+    print(f"  Average shortest path: {nx.average_shortest_path_length(G_core):.2f}")
+    print(f"  Diameter: {nx.diameter(G_core)}")
 
 timing['basic_properties'] = time.time() - t_start
 
-# === Compute Centrality Metrics ===
+# === Compute Centrality Metrics (on Core graph) ===
 print("\n" + "="*60)
-print("COMPUTING CENTRALITY METRICS")
+print("COMPUTING CENTRALITY METRICS (Core Graph)")
 print("="*60)
 
 t_start = time.time()
 
 # Degree centrality
-degree_cent = dict(G.degree())
-for node in G.nodes():
-    G.nodes[node]['degree'] = degree_cent[node]
+degree_cent = dict(G_core.degree())
+for node in G_core.nodes():
+    G_core.nodes[node]['degree'] = degree_cent[node]
 print(f"✓ Degree centrality computed")
 
 # Closeness centrality
-closeness_cent = nx.closeness_centrality(G)
-for node in G.nodes():
-    G.nodes[node]['closeness'] = closeness_cent[node]
+closeness_cent = nx.closeness_centrality(G_core)
+for node in G_core.nodes():
+    G_core.nodes[node]['closeness'] = closeness_cent[node]
 print(f"✓ Closeness centrality computed")
 
 # Betweenness centrality
-betweenness_cent = nx.betweenness_centrality(G)
-for node in G.nodes():
-    G.nodes[node]['betweenness'] = betweenness_cent[node]
+betweenness_cent = nx.betweenness_centrality(G_core)
+for node in G_core.nodes():
+    G_core.nodes[node]['betweenness'] = betweenness_cent[node]
 print(f"✓ Betweenness centrality computed")
 
 # Clustering coefficient
-clustering_coef = nx.clustering(G)
-for node in G.nodes():
-    G.nodes[node]['clustering'] = clustering_coef[node]
+clustering_coef = nx.clustering(G_core)
+for node in G_core.nodes():
+    G_core.nodes[node]['clustering'] = clustering_coef[node]
 print(f"✓ Clustering coefficient computed")
 
 timing['centrality_metrics'] = time.time() - t_start
 print(f"\n✓ Centrality metrics completed in {timing['centrality_metrics']:.2f}s")
 
-# === Compute Ricci Curvature ===
+# === Compute Ricci Curvature (on both graphs) ===
 print("\n" + "="*60)
 print("COMPUTING RICCI CURVATURE")
 print("="*60)
 
 t_start = time.time()
 
-print("Computing Ollivier-Ricci curvature (alpha=0.5)...")
-orc = OllivierRicci(G, alpha=0.5, verbose="ERROR")
-orc.compute_ricci_curvature()
+# Compute for FULL graph (with walls)
+print("Computing Ollivier-Ricci curvature for FULL graph (alpha=0.5)...")
+orc_full = OllivierRicci(G_full, alpha=0.5, verbose="ERROR")
+orc_full.compute_ricci_curvature()
 
-# Extract edge curvatures
-for u, v, d in orc.G.edges(data=True):
+for u, v, d in orc_full.G.edges(data=True):
     if 'ricciCurvature' in d:
-        G[u][v]['ricci_curvature'] = d['ricciCurvature']
+        G_full[u][v]['ricci_curvature'] = d['ricciCurvature']
 
-print(f"✓ Edge curvature computed for {G.number_of_edges()} edges")
+print(f"✓ Edge curvature computed for {G_full.number_of_edges()} edges in full graph")
 
-# Compute average node curvature
+# Compute for CORE graph (particles only)
+print("Computing Ollivier-Ricci curvature for CORE graph (alpha=0.5)...")
+orc_core = OllivierRicci(G_core, alpha=0.5, verbose="ERROR")
+orc_core.compute_ricci_curvature()
+
+for u, v, d in orc_core.G.edges(data=True):
+    if 'ricciCurvature' in d:
+        G_core[u][v]['ricci_curvature'] = d['ricciCurvature']
+
+print(f"✓ Edge curvature computed for {G_core.number_of_edges()} edges in core graph")
+
+# Compute average node curvature for core graph
 curv_sum = defaultdict(float)
 count = defaultdict(int)
-for u, v, data in G.edges(data=True):
+for u, v, data in G_core.edges(data=True):
     if 'ricci_curvature' in data:
         curv = data['ricci_curvature']
         curv_sum[u] += curv
@@ -216,13 +295,13 @@ for u, v, data in G.edges(data=True):
         count[u] += 1
         count[v] += 1
 
-for node in G.nodes():
+for node in G_core.nodes():
     if count[node] > 0:
-        G.nodes[node]['avg_ricci_curvature'] = curv_sum[node] / count[node]
+        G_core.nodes[node]['avg_ricci_curvature'] = curv_sum[node] / count[node]
     else:
-        G.nodes[node]['avg_ricci_curvature'] = 0.0
+        G_core.nodes[node]['avg_ricci_curvature'] = 0.0
 
-print(f"✓ Average node curvature computed")
+print(f"✓ Average node curvature computed for core graph")
 
 timing['ricci_curvature'] = time.time() - t_start
 print(f"\n✓ Ricci curvature completed in {timing['ricci_curvature']:.2f}s")
@@ -232,32 +311,59 @@ print("\n" + "="*60)
 print("STATISTICS SUMMARY")
 print("="*60)
 
-# Force statistics
-forces_list = [d['force'] for u, v, d in G.edges(data=True) if 'force' in d]
-if forces_list:
-    print(f"\nForce Statistics:")
-    print(f"  Mean: {np.mean(forces_list):.4f}")
-    print(f"  Std: {np.std(forces_list):.4f}")
-    print(f"  Min: {np.min(forces_list):.4f}")
-    print(f"  Max: {np.max(forces_list):.4f}")
+# Normal force statistics (from full graph)
+normal_forces = [d['normal_force'] for u, v, d in G_full.edges(data=True) if 'normal_force' in d]
+if normal_forces:
+    print(f"\nNormal Force Statistics (Full Graph):")
+    print(f"  Mean: {np.mean(normal_forces):.4f}")
+    print(f"  Std: {np.std(normal_forces):.4f}")
+    print(f"  Min: {np.min(normal_forces):.4f}")
+    print(f"  Max: {np.max(normal_forces):.4f}")
 
-# Curvature statistics
-curv_list = [d['ricci_curvature'] for u, v, d in G.edges(data=True) if 'ricci_curvature' in d]
-if curv_list:
-    print(f"\nRicci Curvature Statistics:")
-    print(f"  Mean: {np.mean(curv_list):.4f}")
-    print(f"  Std: {np.std(curv_list):.4f}")
-    print(f"  Min: {np.min(curv_list):.4f}")
-    print(f"  Max: {np.max(curv_list):.4f}")
+# Tangential force statistics
+tangential_forces = [d['tangential_force'] for u, v, d in G_full.edges(data=True) if 'tangential_force' in d]
+if tangential_forces:
+    print(f"\nTangential Force Statistics (Full Graph):")
+    print(f"  Mean: {np.mean(tangential_forces):.4f}")
+    print(f"  Std: {np.std(tangential_forces):.4f}")
+    print(f"  Min: {np.min(tangential_forces):.4f}")
+    print(f"  Max: {np.max(tangential_forces):.4f}")
 
-# Stress statistics
-stress_list = [d['stress'] for n, d in G.nodes(data=True) if 'stress' in d]
-if stress_list:
-    print(f"\nStress Statistics:")
-    print(f"  Mean: {np.mean(stress_list):.4f}")
-    print(f"  Std: {np.std(stress_list):.4f}")
-    print(f"  Min: {np.min(stress_list):.4f}")
-    print(f"  Max: {np.max(stress_list):.4f}")
+# Curvature statistics (full graph)
+curv_full = [d['ricci_curvature'] for u, v, d in G_full.edges(data=True) if 'ricci_curvature' in d]
+if curv_full:
+    print(f"\nRicci Curvature Statistics (Full Graph):")
+    print(f"  Mean: {np.mean(curv_full):.4f}")
+    print(f"  Std: {np.std(curv_full):.4f}")
+    print(f"  Min: {np.min(curv_full):.4f}")
+    print(f"  Max: {np.max(curv_full):.4f}")
+
+# Curvature statistics (core graph)
+curv_core = [d['ricci_curvature'] for u, v, d in G_core.edges(data=True) if 'ricci_curvature' in d]
+if curv_core:
+    print(f"\nRicci Curvature Statistics (Core Graph):")
+    print(f"  Mean: {np.mean(curv_core):.4f}")
+    print(f"  Std: {np.std(curv_core):.4f}")
+    print(f"  Min: {np.min(curv_core):.4f}")
+    print(f"  Max: {np.max(curv_core):.4f}")
+
+# Von Mises stress statistics
+vm_stress = [d['stress_vm'] for n, d in G_core.nodes(data=True) if 'stress_vm' in d]
+if vm_stress:
+    print(f"\nVon Mises Stress Statistics:")
+    print(f"  Mean: {np.mean(vm_stress):.4f}")
+    print(f"  Std: {np.std(vm_stress):.4f}")
+    print(f"  Min: {np.min(vm_stress):.4f}")
+    print(f"  Max: {np.max(vm_stress):.4f}")
+
+# Hydrostatic stress statistics
+hydro_stress = [d['stress_hydro'] for n, d in G_core.nodes(data=True) if 'stress_hydro' in d]
+if hydro_stress:
+    print(f"\nHydrostatic Stress Statistics:")
+    print(f"  Mean: {np.mean(hydro_stress):.4f}")
+    print(f"  Std: {np.std(hydro_stress):.4f}")
+    print(f"  Min: {np.min(hydro_stress):.4f}")
+    print(f"  Max: {np.max(hydro_stress):.4f}")
 
 # === Save Results ===
 print("\n" + "="*60)
@@ -266,16 +372,25 @@ print("="*60)
 
 t_start = time.time()
 
-# Save graph as pickle
-graph_output = os.path.join(output_path, 'test_graph.pkl')
-with open(graph_output, 'wb') as f:
-    pickle.dump(G, f)
-print(f"✓ Graph saved to: {graph_output}")
+# Save full graph (with walls)
+graph_full_pkl = os.path.join(output_path, 'test_graph_full.pkl')
+with open(graph_full_pkl, 'wb') as f:
+    pickle.dump(G_full, f)
+print(f"✓ Full graph (with walls) saved to: {graph_full_pkl}")
 
-# Save graph as GraphML
-graphml_output = os.path.join(output_path, 'test_graph.graphml')
-nx.write_graphml(G, graphml_output)
-print(f"✓ Graph saved to: {graphml_output}")
+graph_full_graphml = os.path.join(output_path, 'test_graph_full.graphml')
+nx.write_graphml(G_full, graph_full_graphml)
+print(f"✓ Full graph (with walls) saved to: {graph_full_graphml}")
+
+# Save core graph (particles only)
+graph_core_pkl = os.path.join(output_path, 'test_graph_core.pkl')
+with open(graph_core_pkl, 'wb') as f:
+    pickle.dump(G_core, f)
+print(f"✓ Core graph (particles only) saved to: {graph_core_pkl}")
+
+graph_core_graphml = os.path.join(output_path, 'test_graph_core.graphml')
+nx.write_graphml(G_core, graph_core_graphml)
+print(f"✓ Core graph (particles only) saved to: {graph_core_graphml}")
 
 timing['saving'] = time.time() - t_start
 
