@@ -1,0 +1,48 @@
+# Data directories
+Data/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Results and outputs
+*.mat
+*.pkl
+*.pickle
+results/
+outputs/
+figures/
+*.png
+*.jpg
+*.pdf
+
+# Logs
+*.log
