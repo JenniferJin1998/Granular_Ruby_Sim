@@ -315,19 +315,19 @@ print("="*60)
 normal_forces = [d['normal_force'] for u, v, d in G_full.edges(data=True) if 'normal_force' in d]
 if normal_forces:
     print(f"\nNormal Force Statistics (Full Graph):")
-    print(f"  Mean: {np.mean(normal_forces):.4f}")
-    print(f"  Std: {np.std(normal_forces):.4f}")
-    print(f"  Min: {np.min(normal_forces):.4f}")
-    print(f"  Max: {np.max(normal_forces):.4f}")
+    print(f"  Mean: {np.mean(normal_forces):.4e}")
+    print(f"  Std: {np.std(normal_forces):.4e}")
+    print(f"  Min: {np.min(normal_forces):.4e}")
+    print(f"  Max: {np.max(normal_forces):.4e}")
 
 # Tangential force statistics
 tangential_forces = [d['tangential_force'] for u, v, d in G_full.edges(data=True) if 'tangential_force' in d]
 if tangential_forces:
     print(f"\nTangential Force Statistics (Full Graph):")
-    print(f"  Mean: {np.mean(tangential_forces):.4f}")
-    print(f"  Std: {np.std(tangential_forces):.4f}")
-    print(f"  Min: {np.min(tangential_forces):.4f}")
-    print(f"  Max: {np.max(tangential_forces):.4f}")
+    print(f"  Mean: {np.mean(tangential_forces):.4e}")
+    print(f"  Std: {np.std(tangential_forces):.4e}")
+    print(f"  Min: {np.min(tangential_forces):.4e}")
+    print(f"  Max: {np.max(tangential_forces):.4e}")
 
 # Curvature statistics (full graph)
 curv_full = [d['ricci_curvature'] for u, v, d in G_full.edges(data=True) if 'ricci_curvature' in d]
@@ -351,19 +351,19 @@ if curv_core:
 vm_stress = [d['stress_vm'] for n, d in G_core.nodes(data=True) if 'stress_vm' in d]
 if vm_stress:
     print(f"\nVon Mises Stress Statistics:")
-    print(f"  Mean: {np.mean(vm_stress):.4f}")
-    print(f"  Std: {np.std(vm_stress):.4f}")
-    print(f"  Min: {np.min(vm_stress):.4f}")
-    print(f"  Max: {np.max(vm_stress):.4f}")
+    print(f"  Mean: {np.mean(vm_stress):.4e}")
+    print(f"  Std: {np.std(vm_stress):.4e}")
+    print(f"  Min: {np.min(vm_stress):.4e}")
+    print(f"  Max: {np.max(vm_stress):.4e}")
 
 # Hydrostatic stress statistics
 hydro_stress = [d['stress_hydro'] for n, d in G_core.nodes(data=True) if 'stress_hydro' in d]
 if hydro_stress:
     print(f"\nHydrostatic Stress Statistics:")
-    print(f"  Mean: {np.mean(hydro_stress):.4f}")
-    print(f"  Std: {np.std(hydro_stress):.4f}")
-    print(f"  Min: {np.min(hydro_stress):.4f}")
-    print(f"  Max: {np.max(hydro_stress):.4f}")
+    print(f"  Mean: {np.mean(hydro_stress):.4e}")
+    print(f"  Std: {np.std(hydro_stress):.4e}")
+    print(f"  Min: {np.min(hydro_stress):.4e}")
+    print(f"  Max: {np.max(hydro_stress):.4e}")
 
 # === Save Results ===
 print("\n" + "="*60)
@@ -372,24 +372,44 @@ print("="*60)
 
 t_start = time.time()
 
-# Save full graph (with walls)
+# Save full graph (with walls) as pickle
 graph_full_pkl = os.path.join(output_path, 'test_graph_full.pkl')
 with open(graph_full_pkl, 'wb') as f:
     pickle.dump(G_full, f)
 print(f"✓ Full graph (with walls) saved to: {graph_full_pkl}")
 
-graph_full_graphml = os.path.join(output_path, 'test_graph_full.graphml')
-nx.write_graphml(G_full, graph_full_graphml)
-print(f"✓ Full graph (with walls) saved to: {graph_full_graphml}")
-
-# Save core graph (particles only)
+# Save core graph (particles only) as pickle
 graph_core_pkl = os.path.join(output_path, 'test_graph_core.pkl')
 with open(graph_core_pkl, 'wb') as f:
     pickle.dump(G_core, f)
 print(f"✓ Core graph (particles only) saved to: {graph_core_pkl}")
 
+# Create GraphML-compatible copies (convert tuples to strings)
+def make_graphml_compatible(G):
+    """Convert tuple attributes to strings for GraphML export."""
+    G_copy = G.copy()
+    for node, data in G_copy.nodes(data=True):
+        for key, value in list(data.items()):
+            if isinstance(value, tuple):
+                data[key + '_str'] = str(value)
+                del data[key]
+    for u, v, data in G_copy.edges(data=True):
+        for key, value in list(data.items()):
+            if isinstance(value, tuple):
+                data[key + '_str'] = str(value)
+                del data[key]
+    return G_copy
+
+print("\nConverting graphs for GraphML export...")
+G_full_gml = make_graphml_compatible(G_full)
+G_core_gml = make_graphml_compatible(G_core)
+
+graph_full_graphml = os.path.join(output_path, 'test_graph_full.graphml')
+nx.write_graphml(G_full_gml, graph_full_graphml)
+print(f"✓ Full graph (with walls) saved to: {graph_full_graphml}")
+
 graph_core_graphml = os.path.join(output_path, 'test_graph_core.graphml')
-nx.write_graphml(G_core, graph_core_graphml)
+nx.write_graphml(G_core_gml, graph_core_graphml)
 print(f"✓ Core graph (particles only) saved to: {graph_core_graphml}")
 
 timing['saving'] = time.time() - t_start
