@@ -46,3 +46,6 @@ figures/
 
 # Logs
 *.log
+
+# Batch-job scratch artifacts
+AnalysisScripts/jobs/tmp/
