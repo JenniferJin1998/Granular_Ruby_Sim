@@ -1,7 +1,7 @@
 import os
-import csv
 import json
 import re
+import time
 import numpy as np
 import scipy.io
 import networkx as nx
@@ -19,6 +19,7 @@ from scipy.sparse.linalg import eigsh
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 base_path = os.path.join(PROJECT_ROOT, 'Data', 'PeriodicBoudaries')
+
 
 def _env_flag(name, default):
     value = os.environ.get(name)
@@ -38,13 +39,22 @@ def _env_int(name, default):
         return default
 
 
+def _env_csv(name):
+    value = os.environ.get(name)
+    if not value:
+        return []
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+
 out_path = os.environ.get(
     'GRAPHGEN_OUT_PATH',
     os.path.join(PROJECT_ROOT, 'AnalysisResults', 'PeriodicBoudaries', 'GraphGeneration'),
 )
+GEOMETRY_FILTERS = {item.lower() for item in _env_csv('GRAPHGEN_GEOMETRY_FILTER')}
+MAX_SIMS_PER_GEOMETRY = max(0, _env_int('GRAPHGEN_MAX_SIMS_PER_GEOMETRY', 0))
+ENABLE_TIMING_LOGS = _env_flag('GRAPHGEN_ENABLE_TIMING_LOGS', True)
+default_shape = (1,)
 os.makedirs(out_path, exist_ok=True)
-os.makedirs(os.path.join(out_path, 'pair_edge_connectivity'), exist_ok=True)
-
 
 # Threshold mode toggles:
 USE_GLOBAL_HIGH_FORCE_THRESHOLD = False  # True → single threshold across all geometries (unless reference mode set)
@@ -87,6 +97,17 @@ NODE_CONN_VERBOSE = _env_int('GRAPHGEN_NODE_CONN_VERBOSE', 0)
 graph_dict = {}
 slice_info = []
 pair_edge_index_records = []
+
+
+def _log_timing(prefix, step_name, started_at):
+    if ENABLE_TIMING_LOGS:
+        print(f"{prefix} {step_name}: {time.perf_counter() - started_at:.2f}s")
+
+
+def _log_stage_start(prefix, step_name, extra=None):
+    if ENABLE_TIMING_LOGS:
+        detail = f" ({extra})" if extra else ""
+        print(f"{prefix} Starting {step_name}{detail}...")
 
 
 def _safe_degree_assortativity_coefficient(G):
@@ -509,12 +530,8 @@ def _compute_loop_metrics(G):
     return metrics
 
 
-def _iter_pair_edge_connectivity_records(
-    G_core,
-    G_full,
-    gh_core_map,
-    gh_full_map,
-):
+def _compute_pair_edge_connectivity_records(G_core, G_full, gh_core_map, gh_full_map):
+    records = []
     node_list = list(G_core.nodes())
     graph_id = {
         'geometry': G_full.graph.get('angle_label'),
@@ -523,14 +540,16 @@ def _iter_pair_edge_connectivity_records(
 
     for idx, u in enumerate(node_list[:-1]):
         for v in node_list[idx + 1:]:
-            yield {
+            records.append({
                 **graph_id,
                 'node1': u,
                 'node2': v,
                 'is_edge': bool(G_core.has_edge(u, v)),
                 'edge_connectivity': _local_edge_connectivity(G_core, gh_core_map, u, v),
                 'edge_connectivity_with_walls': _local_edge_connectivity(G_full, gh_full_map, u, v),
-            }
+            })
+
+    return records
 
 
 def _json_default(value):
@@ -572,15 +591,16 @@ def _flatten_named_vector(record, key, value, out_names):
     return True
 
 # === Helper to compute dual metrics ===
-def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, pair_edge_out_dir=None):
+def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1):
     """
     Returns
     -------
     G_core : nx.Graph
         Core graph (no wall nodes) with node/edge/graph metrics attached.
-    pair_edge_index_entry : dict | None
-        Metadata for the per-graph all-pairs particle table written to disk.
+    pair_edge_records : list[dict]
+        Per-graph all-pairs particle table for pairwise edge connectivity.
     """
+    sim_prefix = f"[{G_full.graph.get('angle_label')} sim {int(G_full.graph.get('sim_idx', -1)):03d}]"
     core_nodes = [n for n, d in G_full.nodes(data=True) if not d.get('is_wall', False)]
     G_core = G_full.subgraph(core_nodes).copy()
     wall_nodes_with_walls = sum(1 for _, d in G_full.nodes(data=True) if d.get('is_wall', False))
@@ -592,6 +612,15 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
     _set_dual_graph_attr(G_core, G_full, 'wall_contacts', 0, wall_contacts_with_walls)
 
     # Core-only centralities
+    _log_stage_start(
+        sim_prefix,
+        "centrality+assortativity bundle",
+        extra=(
+            f"core_nodes={G_core.number_of_nodes()}, core_edges={G_core.number_of_edges()}, "
+            f"full_nodes={G_full.number_of_nodes()}, full_edges={G_full.number_of_edges()}"
+        ),
+    )
+    started_at = time.perf_counter()
     degree_core = dict(G_core.degree())
     closeness_core = nx.closeness_centrality(G_core)
     betweenness_core = nx.betweenness_centrality(G_core)
@@ -610,11 +639,14 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
     degree_assortativity_with_walls = _safe_degree_assortativity_coefficient(G_full)
     edge_conn_no_walls, node_conn_no_walls = _safe_graph_connectivities(G_core)
     edge_conn_with_walls, node_conn_with_walls = _safe_graph_connectivities(G_full)
+    _log_timing(sim_prefix, "centrality+assortativity bundle", started_at)
 
     _set_dual_graph_attr(G_core, G_full, 'assortativity', degree_assortativity_no_walls, degree_assortativity_with_walls)
     _set_dual_graph_attr(G_core, G_full, 'edge_connectivity_graph', edge_conn_no_walls, edge_conn_with_walls)
     _set_dual_graph_attr(G_core, G_full, 'node_connectivity_graph', node_conn_no_walls, node_conn_with_walls)
 
+    _log_stage_start(sim_prefix, "distance+loop metrics")
+    started_at = time.perf_counter()
     core_distance_metrics = _compute_graph_distance_metrics(G_core)
     full_distance_metrics = _compute_graph_distance_metrics(G_full)
     for key in core_distance_metrics:
@@ -639,8 +671,15 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
             core_loop_metrics.get(key, default),
             full_loop_metrics.get(key, default),
         )
+    _log_timing(sim_prefix, "distance+loop metrics", started_at)
 
     if RUN_SPECTRAL_ANALYSIS:
+        _log_stage_start(
+            sim_prefix,
+            "spectral bundle",
+            extra=f"num_eigenpairs={SPECTRAL_NUM_EIGENPAIRS}",
+        )
+        started_at = time.perf_counter()
         core_spec_nodes, core_eigvals, core_eigvecs = _compute_adjacency_eigenpairs(
             G_core,
             num_eigenpairs=SPECTRAL_NUM_EIGENPAIRS,
@@ -737,37 +776,46 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
         for idx, node in enumerate(full_lap_bundle['node_order']):
             value = full_lap_bundle['fiedler_vector'][idx]
             G_full.nodes[node]['fiedler_with_walls'] = float(value) if np.isfinite(value) else np.nan
+        _log_timing(sim_prefix, "spectral bundle", started_at)
 
     edges_list = list(G_core.edges())
 
+    pair_count = G_core.number_of_nodes() * max(0, G_core.number_of_nodes() - 1) // 2
+    _log_stage_start(
+        sim_prefix,
+        "gomory-hu + pair-edge export",
+        extra=f"core_edges={len(edges_list)}, pair_rows={pair_count}",
+    )
+    started_at = time.perf_counter()
     gh_core_map = _build_gomory_hu_map(G_core)
     gh_full_map = _build_gomory_hu_map(G_full)
-    pair_edge_index_entry = None
-    if pair_edge_out_dir is not None:
-        pair_edge_index_entry = _save_pair_edge_connectivity_records(
-            _iter_pair_edge_connectivity_records(
-                G_core,
-                G_full,
-                gh_core_map,
-                gh_full_map,
-            ),
-            out_dir=pair_edge_out_dir,
-            geometry=G_full.graph.get('angle_label'),
-            sim_idx=G_full.graph.get('sim_idx'),
-        )
+    pair_edge_records = _compute_pair_edge_connectivity_records(G_core, G_full, gh_core_map, gh_full_map)
+    _log_timing(sim_prefix, "gomory-hu + pair-edge export", started_at)
 
+    _log_stage_start(
+        sim_prefix,
+        "edge-connectivity edge attributes",
+        extra=f"core_edges={len(edges_list)}",
+    )
+    started_at = time.perf_counter()
     for u, v in edges_list:
         edge_conn_core = _local_edge_connectivity(G_core, gh_core_map, u, v)
         edge_conn_full = _local_edge_connectivity(G_full, gh_full_map, u, v)
         G_core[u][v]['edge_connectivity'] = edge_conn_core
         G_core[u][v]['edge_connectivity_with_walls'] = edge_conn_full
+    _log_timing(sim_prefix, "edge-connectivity edge attributes", started_at)
 
     # Node connectivity (NP-hard; use parallel processing for speedup)
     def _compute_node_connectivity_pair(u, v, G):
         return (u, v, nx.node_connectivity(G, u, v))
 
     # Parallel: node connectivity (no walls) for core edges
-    print(f"Computing node connectivity (core, {len(edges_list)} edges) with parallel processing...")
+    _log_stage_start(
+        sim_prefix,
+        "node connectivity core edges",
+        extra=f"edges={len(edges_list)}, n_jobs={node_conn_n_jobs}",
+    )
+    started_at = time.perf_counter()
     if edges_list:
         results_core = Parallel(n_jobs=node_conn_n_jobs, verbose=node_conn_verbose)(
             delayed(_compute_node_connectivity_pair)(u, v, G_core) for u, v in edges_list
@@ -776,9 +824,15 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
         results_core = []
     for u, v, nc in results_core:
         G_core[u][v]['node_connectivity'] = nc
+    _log_timing(sim_prefix, "node connectivity core edges", started_at)
 
     # Parallel: node connectivity (with walls) for core edges
-    print(f"Computing node connectivity (full, {len(edges_list)} edges) with parallel processing...")
+    _log_stage_start(
+        sim_prefix,
+        "node connectivity full edges",
+        extra=f"edges={len(edges_list)}, n_jobs={node_conn_n_jobs}",
+    )
+    started_at = time.perf_counter()
     if edges_list:
         results_full = Parallel(n_jobs=node_conn_n_jobs, verbose=node_conn_verbose)(
             delayed(_compute_node_connectivity_pair)(u, v, G_full) for u, v in edges_list
@@ -787,6 +841,7 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
         results_full = []
     for u, v, nc in results_full:
         G_core[u][v]['node_connectivity_with_walls'] = nc
+    _log_timing(sim_prefix, "node connectivity full edges", started_at)
 
     # Assign dual-view node metrics (only to core nodes)
     for node in G_core.nodes():
@@ -803,6 +858,8 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
         G_core.nodes[node]['avg_neighbor_degree_with_walls'] = avg_neighbor_degree_full.get(node, 0.0)
 
     # Edge curvature (with walls)
+    _log_stage_start(sim_prefix, "ollivier-ricci bundle")
+    started_at = time.perf_counter()
     orc_full = OllivierRicci(G_full.copy(), alpha=0.5, verbose="ERROR")
     orc_full.compute_ricci_curvature()
     for u, v, d in orc_full.G.edges(data=True):
@@ -830,9 +887,15 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
 
     assign_avg_curv(G_core, 'curvature_with_walls', 'avg_curvature_with_walls')
     assign_avg_curv(G_core, 'curvature_no_walls', 'avg_curvature_no_walls')
+    _log_timing(sim_prefix, "ollivier-ricci bundle", started_at)
 
     if RUN_NFD_ANALYSIS:
-        print(f"Computing unweighted NFD metrics on core graph (nodes={G_core.number_of_nodes()}, edges={G_core.number_of_edges()})...")
+        _log_stage_start(
+            sim_prefix,
+            "nfd bundle",
+            extra=f"core_nodes={G_core.number_of_nodes()}, core_edges={G_core.number_of_edges()}",
+        )
+        started_at = time.perf_counter()
         nfd_node_metrics, nfd_graph_metrics = _compute_unweighted_nfd_bundle(
             G_core,
             q_values=NFD_Q_VALUES,
@@ -845,6 +908,7 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
 
         G_core.graph.update(nfd_graph_metrics)
         G_full.graph.update(nfd_graph_metrics)
+        _log_timing(sim_prefix, "nfd bundle", started_at)
 
     for node in G_core.nodes():
         if node in G_full.nodes:
@@ -863,7 +927,7 @@ def compute_dual_view_metrics(G_full, node_conn_n_jobs=-1, node_conn_verbose=1, 
         if G_full.has_edge(a, b):
             G_full[a][b].update(G_core[a][b])
 
-    return G_core, pair_edge_index_entry
+    return G_core, pair_edge_records
 
 # === High-force tagging core ===
 def _tag_high_force_edges_and_nodes(G_full, G_core, threshold):
@@ -1164,17 +1228,6 @@ def _graph_id_fields(G):
     }
 
 
-PAIR_EDGE_FIELDNAMES = (
-    'geometry',
-    'sim_idx',
-    'node1',
-    'node2',
-    'is_edge',
-    'edge_connectivity',
-    'edge_connectivity_with_walls',
-)
-
-
 def _save_pair_edge_connectivity_records(records, out_dir, geometry, sim_idx):
     pair_dir = os.path.join(out_dir, 'pair_edge_connectivity')
     os.makedirs(pair_dir, exist_ok=True)
@@ -1183,18 +1236,11 @@ def _save_pair_edge_connectivity_records(records, out_dir, geometry, sim_idx):
     filename = f'{safe_geometry}_sim_{int(sim_idx):03d}_pair_edge_connectivity.csv'
     csv_path = os.path.join(pair_dir, filename)
 
-    num_pairs = 0
-    with open(csv_path, 'w', newline='') as csv_handle:
-        writer = csv.DictWriter(csv_handle, fieldnames=PAIR_EDGE_FIELDNAMES)
-        writer.writeheader()
-        for record in records:
-            writer.writerow(record)
-            num_pairs += 1
-
+    pd.DataFrame(records).to_csv(csv_path, index=False)
     return {
         'geometry': geometry,
         'sim_idx': sim_idx,
-        'num_pairs': num_pairs,
+        'num_pairs': len(records),
         'pair_file': csv_path,
     }
 
@@ -1277,9 +1323,13 @@ def _process_simulation_slice(
     num_particles,
     node_conn_n_jobs,
     node_conn_verbose,
-    pair_edge_out_dir,
 ):
-    print(f"[{label} sim {sim_idx:03d}] Starting slice with {num_particles} particles and {num_contacts} contacts...")
+    slice_started_at = time.perf_counter()
+    print(
+        f"[{label} sim {sim_idx:03d}] Starting slice with {num_particles} particles, "
+        f"{num_contacts} contacts, node_conn_n_jobs={node_conn_n_jobs}..."
+    )
+    build_started_at = time.perf_counter()
     G = nx.Graph()
     for pid in range(num_particles):
         pos = tuple(pos_array[pid])
@@ -1347,6 +1397,11 @@ def _process_simulation_slice(
     G.graph['angle_label'] = label
     G.graph['num_particles'] = num_particles
     G.graph['num_contacts'] = int(num_contacts)
+    _log_timing(f"[{label} sim {sim_idx:03d}]", "graph construction", build_started_at)
+    print(
+        f"[{label} sim {sim_idx:03d}] Built full graph with "
+        f"{G.number_of_nodes()} nodes and {G.number_of_edges()} edges."
+    )
 
     slice_entry = {
         'label': label,
@@ -1359,21 +1414,21 @@ def _process_simulation_slice(
         'end_idx_particle': int(start_idx_particle + num_particles),
     }
 
-    G_core, pair_edge_index_entry = compute_dual_view_metrics(
+    G_core, pair_edge_records = compute_dual_view_metrics(
         G,
         node_conn_n_jobs=node_conn_n_jobs,
         node_conn_verbose=node_conn_verbose,
-        pair_edge_out_dir=pair_edge_out_dir,
     )
-
+    _log_timing(f"[{label} sim {sim_idx:03d}]", "total slice runtime", slice_started_at)
     print(f"[{label} sim {sim_idx:03d}] Finished slice.")
 
     return {
         'G_full': G,
         'G_core': G_core,
         'slice_entry': slice_entry,
-        'pair_edge_index_entry': pair_edge_index_entry,
+        'pair_edge_records': pair_edge_records,
     }
+
 
 def _folder_to_angle_label(folder_name):
     match = re.search(r'(\d+(?:\.\d+)?)', folder_name)
@@ -1381,10 +1436,7 @@ def _folder_to_angle_label(folder_name):
         return folder_name
 
     angle_value = float(match.group(1))
-    if angle_value.is_integer():
-        angle_text = str(int(angle_value))
-    else:
-        angle_text = match.group(1)
+    angle_text = str(int(angle_value)) if angle_value.is_integer() else match.group(1)
     return f'{angle_text}deg'
 
 
@@ -1404,7 +1456,20 @@ def _discover_geometry_folders(data_root):
         if not entry.startswith('.') and os.path.isdir(os.path.join(data_root, entry))
     ]
     folder_names.sort(key=_geometry_sort_key)
-    return [(_folder_to_angle_label(folder_name), folder_name) for folder_name in folder_names]
+    geometry_specs = [(_folder_to_angle_label(folder_name), folder_name) for folder_name in folder_names]
+
+    if not GEOMETRY_FILTERS:
+        return geometry_specs
+
+    filtered = [
+        (label, folder)
+        for label, folder in geometry_specs
+        if label.lower() in GEOMETRY_FILTERS or folder.lower() in GEOMETRY_FILTERS
+    ]
+    if not filtered:
+        requested = ', '.join(sorted(GEOMETRY_FILTERS))
+        raise ValueError(f'No geometries matched GRAPHGEN_GEOMETRY_FILTER={requested}')
+    return filtered
 
 
 def _find_mat_file(folder_path, preferred_names, required_tokens, optional=False):
@@ -1430,7 +1495,7 @@ def _find_mat_file(folder_path, preferred_names, required_tokens, optional=False
     )
 
 
-def _load_mat_array(mat_file, preferred_keys, fallback_tokens, label, description):
+def _load_mat_array(mat_file, preferred_keys, fallback_tokens, description):
     mat_data = scipy.io.loadmat(mat_file)
     key_used = next((key for key in preferred_keys if key in mat_data), None)
 
@@ -1447,9 +1512,7 @@ def _load_mat_array(mat_file, preferred_keys, fallback_tokens, label, descriptio
     if key_used is None:
         raise KeyError(f'Could not find {description} key in {mat_file}')
 
-    print(
-        f"Loaded {description} for {label}: file={os.path.basename(mat_file)}, key={key_used}"
-    )
+    print(f"Loaded {description}: file={os.path.basename(mat_file)}, key={key_used}")
     return mat_data[key_used]
 
 
@@ -1484,216 +1547,224 @@ def _infer_particles_per_simulation(particle_positions, contact_counts, label):
 
     return total_particles // num_sims
 
+# === Main loop ===
+geometry_specs = _discover_geometry_folders(base_path)
+if not geometry_specs:
+    raise FileNotFoundError(f'No geometry folders found under {base_path}')
 
-def main():
-    graph_dict = {}
-    slice_info = []
-    pair_edge_index_records = []
+processed_angle_labels = [label for label, _ in geometry_specs]
+print(f"Writing outputs to: {out_path}")
+print(f"Discovered geometries: {', '.join(processed_angle_labels)}")
+if GEOMETRY_FILTERS:
+    print(f"Geometry filter active: {', '.join(sorted(GEOMETRY_FILTERS))}")
+if MAX_SIMS_PER_GEOMETRY > 0:
+    print(f"Simulation cap active: first {MAX_SIMS_PER_GEOMETRY} simulations per geometry")
 
-    geometry_specs = _discover_geometry_folders(base_path)
-    if not geometry_specs:
-        raise FileNotFoundError(f'No geometry folders found under {base_path}')
+for label, folder in geometry_specs:
+    folder_path = os.path.join(base_path, folder)
+    print(f"Processing {label} from {folder_path}...")
+    force_file = _find_mat_file(folder_path, ('Forces.mat', 'forces.mat'), ('force',))
+    count_file = _find_mat_file(folder_path, ('flengths.mat',), ('length',))
+    pos_file = _find_mat_file(folder_path, ('Pos.mat', 'pos.mat'), ('pos',))
+    stress_file = _find_mat_file(folder_path, ('AllStresses.mat',), ('stress',))
+    roi_file = _find_mat_file(folder_path, ('ROI.mat', 'roi.mat'), ('roi',), optional=True)
 
-    angle_labels = [label for label, _ in geometry_specs]
-    print(f"Writing outputs to: {out_path}")
-    print(f"Discovered geometries: {', '.join(angle_labels)}")
-
-    for label, folder in geometry_specs:
-        folder_path = os.path.join(base_path, folder)
-        print(f"Processing {label} from {folder_path}...")
-
-        force_file = _find_mat_file(folder_path, ('Forces.mat', 'forces.mat'), ('force',))
-        count_file = _find_mat_file(folder_path, ('flengths.mat',), ('length',))
-        pos_file = _find_mat_file(folder_path, ('Pos.mat', 'pos.mat'), ('pos',))
-        stress_file = _find_mat_file(folder_path, ('AllStresses.mat',), ('stress',))
-        roi_file = _find_mat_file(folder_path, ('ROI.mat', 'roi.mat'), ('roi',), optional=True)
-
-        contact_forces = _load_mat_array(
-            force_file,
-            preferred_keys=('forces_collect',),
-            fallback_tokens=('force',),
-            label=label,
-            description='force data',
-        )
-        contact_counts = np.asarray(
-            _load_mat_array(
-                count_file,
-                preferred_keys=('f_lengths',),
-                fallback_tokens=('length',),
-                label=label,
-                description='force length data',
-            )
-        ).reshape(-1)
-        particle_positions = np.asarray(
-            _load_mat_array(
-                pos_file,
-                preferred_keys=('Pos_collect',),
-                fallback_tokens=('pos',),
-                label=label,
-                description='position data',
-            )
-        )
-        stress_components = np.asarray(
-            _load_mat_array(
-                stress_file,
-                preferred_keys=('sigma_collect',),
-                fallback_tokens=('sigma', 'stress'),
-                label=label,
-                description='stress data',
-            )
-        )
-
-        roi_array = None
-        if roi_file is not None:
-            try:
-                roi_array = _load_mat_array(
-                    roi_file,
-                    preferred_keys=('ROI',),
-                    fallback_tokens=('roi',),
-                    label=label,
-                    description='ROI data',
-                )
-            except Exception as exc:
-                print(f"Error loading ROI for {label} from {roi_file}: {exc}")
-                roi_array = None
-
-        num_particles_per_sim = _infer_particles_per_simulation(
-            particle_positions,
-            contact_counts,
-            label,
-        )
-        total_particles = num_particles_per_sim * len(contact_counts)
-
-        if stress_components.shape[0] != total_particles:
-            raise ValueError(
-                f'Stress rows ({stress_components.shape[0]}) do not match total particles '
-                f'({total_particles}) for {label}.'
-            )
-
-        roi_array = _prepare_roi_array(roi_array, total_particles, label)
-
-        print(
-            f"{label}: {len(contact_counts)} simulations, "
-            f"{num_particles_per_sim} particles/simulation, "
-            f"{int(np.sum(contact_counts))} contacts total."
-        )
-
-        graph_list_core, graph_list_full = [], []
-        start_idx_contact = 0
-        start_idx_particle = 0
-        sim_tasks = []
-        inner_node_conn_jobs = NODE_CONN_N_JOBS_WHEN_SIM_PARALLEL if RUN_SIM_PARALLEL else NODE_CONN_N_JOBS
-
-        for sim_idx, num_contacts in enumerate(contact_counts):
-            num_contacts = int(num_contacts)
-            sim_tasks.append({
-                'label': label,
-                'sim_idx': sim_idx,
-                'force_data': np.asarray(contact_forces[start_idx_contact:start_idx_contact + num_contacts]).copy(),
-                'pos_array': np.asarray(
-                    particle_positions[start_idx_particle:start_idx_particle + num_particles_per_sim]
-                ).copy(),
-                'stress_array': np.asarray(
-                    stress_components[start_idx_particle:start_idx_particle + num_particles_per_sim]
-                ).copy(),
-                'roi_labels': np.asarray(
-                    roi_array[start_idx_particle:start_idx_particle + num_particles_per_sim]
-                ).copy(),
-                'start_idx_contact': int(start_idx_contact),
-                'num_contacts': num_contacts,
-                'start_idx_particle': int(start_idx_particle),
-                'num_particles': int(num_particles_per_sim),
-                'node_conn_n_jobs': inner_node_conn_jobs,
-                'node_conn_verbose': NODE_CONN_VERBOSE,
-                'pair_edge_out_dir': out_path,
-            })
-            start_idx_contact += num_contacts
-            start_idx_particle += num_particles_per_sim
-
-        if RUN_SIM_PARALLEL and len(sim_tasks) > 1:
-            print(f"Running {len(sim_tasks)} simulations for {label} in parallel with n_jobs={SIM_N_JOBS}...")
-            sim_results = Parallel(n_jobs=SIM_N_JOBS, verbose=SIM_PARALLEL_VERBOSE)(
-                delayed(_process_simulation_slice)(**task) for task in sim_tasks
-            )
-        else:
-            sim_results = [_process_simulation_slice(**task) for task in sim_tasks]
-
-        for task, result in zip(sim_tasks, sim_results):
-            slice_info.append(result['slice_entry'])
-            pair_edge_index_records.append(result['pair_edge_index_entry'])
-            graph_list_core.append(result['G_core'])
-            graph_list_full.append(result['G_full'])
-
-        graph_dict[label] = {'core': graph_list_core, 'full': graph_list_full}
-        print(f"→ {len(graph_list_core)} graphs built for {label}")
-
-    high_force_edge_records, threshold_info = label_high_force_edges(
-        graph_dict,
-        use_global=USE_GLOBAL_HIGH_FORCE_THRESHOLD,
-        use_core_for_threshold=USE_CORE_FOR_THRESHOLD,
-        quantile_threshold=None,
-        reference_geometry_label=REFERENCE_GEOMETRY_LABEL,
+    # Load forces
+    contact_forces = _load_mat_array(
+        force_file,
+        preferred_keys=('forces_collect',),
+        fallback_tokens=('force',),
+        description='force data',
     )
 
-    with open(os.path.join(out_path, 'graph_dict_labeled.pkl'), 'wb') as f:
-        pickle.dump(graph_dict, f)
-    print("✅ Saved labeled graph dictionary.")
-
-    df_high_force_edges = pd.DataFrame(high_force_edge_records)
-    df_high_force_edges.to_csv(os.path.join(out_path, 'high_force_edges.csv'), index=False)
-    print("✅ Saved high-force edge list.")
-
-    with open(os.path.join(out_path, "simulation_slices.txt"), "w") as f:
-        header = ["label", "sim_idx", "start_idx_contact", "num_contacts", "end_idx_contact",
-                  "start_idx_particle", "num_particles", "end_idx_particle"]
-        f.write("\t".join(header) + "\n")
-        for entry in slice_info:
-            values = [str(entry[k]) for k in header]
-            f.write("\t".join(values) + "\n")
-    print("✅ Saved simulation slice metadata.")
-
-    with open(os.path.join(out_path, 'high_force_threshold_info.pkl'), 'wb') as f:
-        pickle.dump(threshold_info, f)
-    print(f"✅ Threshold mode: {threshold_info['mode']}. Details: {threshold_info['thresholds']}")
-
-    df_pair_edge_index = pd.DataFrame(pair_edge_index_records)
-    df_pair_edge_index.to_csv(os.path.join(out_path, 'pair_edge_connectivity_index.csv'), index=False)
-    print("✅ Saved pair edge-connectivity index.")
-
-    df_nodes, df_edges, df_graphs, df_graph_arrays = _build_feature_tables(graph_dict)
-
-    df_nodes.to_csv(os.path.join(out_path, 'node_features.csv'), index=False)
-    print("✅ Saved node feature table.")
-
-    df_edges.to_csv(os.path.join(out_path, 'edge_features.csv'), index=False)
-    print("✅ Saved edge feature table.")
-
-    df_graphs.to_csv(os.path.join(out_path, 'graph_features.csv'), index=False)
-    print("✅ Saved graph feature table.")
-
-    df_graph_arrays_serialized = df_graph_arrays.copy()
-    for col in df_graph_arrays_serialized.columns:
-        if col not in {'geometry', 'sim_idx'}:
-            df_graph_arrays_serialized[col] = df_graph_arrays_serialized[col].map(_serialize_value)
-    df_graph_arrays_serialized.to_csv(os.path.join(out_path, 'graph_feature_arrays.csv'), index=False)
-    df_graph_arrays.to_pickle(os.path.join(out_path, 'graph_feature_arrays.pkl'))
-    print("✅ Saved graph array table.")
-
-    if PLOT_FORCE_DISTRIBUTIONS:
-        plot_force_distributions_row(
-            graph_dict,
-            threshold_info,
-            use_core_for_threshold=USE_CORE_FOR_THRESHOLD,
-            out_dir=out_path,
-            bins=FORCE_DIST_BINS,
-            logx=FORCE_DIST_LOGX,
-            angle_order=angle_labels,
-            column_layout=FORCE_DIST_COLUMN,
-            hist_linewidth=HIST_LINE_WIDTH,
-            thr_linewidth=THRESHOLD_LINE_WIDTH,
-            thr_color=THRESHOLD_LINE_COLOR,
+    # Load contact counts
+    contact_counts = np.asarray(
+        _load_mat_array(
+            count_file,
+            preferred_keys=('f_lengths',),
+            fallback_tokens=('length',),
+            description='force length data',
         )
+    ).reshape(-1)
 
+    # Load positions
+    particle_positions = np.asarray(
+        _load_mat_array(
+            pos_file,
+            preferred_keys=('Pos_collect',),
+            fallback_tokens=('pos',),
+            description='position data',
+        )
+    )
 
-if __name__ == '__main__':
-    main()
+    # Load stresses
+    stress_components = np.asarray(
+        _load_mat_array(
+            stress_file,
+            preferred_keys=('sigma_collect',),
+            fallback_tokens=('sigma', 'stress'),
+            description='stress data',
+        )
+    )
+
+    # Load ROI (optional)
+    roi_array = None
+    if roi_file is not None:
+        try:
+            roi_array = _load_mat_array(
+                roi_file,
+                preferred_keys=('ROI',),
+                fallback_tokens=('roi',),
+                description='ROI data',
+            )
+        except Exception as exc:
+            print(f"Error loading {roi_file}: {exc}")
+            roi_array = None
+
+    num_particles_per_sim = _infer_particles_per_simulation(
+        particle_positions,
+        contact_counts,
+        label,
+    )
+    total_particles = num_particles_per_sim * len(contact_counts)
+    if stress_components.shape[0] != total_particles:
+        raise ValueError(
+            f'Stress rows ({stress_components.shape[0]}) do not match total particles '
+            f'({total_particles}) for {label}.'
+        )
+    roi_array = _prepare_roi_array(roi_array, total_particles, label)
+
+    print(
+        f"{label}: {len(contact_counts)} simulations, "
+        f"{num_particles_per_sim} particles/simulation, "
+        f"{int(np.sum(contact_counts))} contacts total."
+    )
+    if MAX_SIMS_PER_GEOMETRY > 0 and len(contact_counts) > MAX_SIMS_PER_GEOMETRY:
+        print(f"{label}: limiting test run to the first {MAX_SIMS_PER_GEOMETRY} of {len(contact_counts)} simulations.")
+
+    graph_list_core, graph_list_full = [], []
+    start_idx_contact = start_idx_particle = 0
+    sim_tasks = []
+    inner_node_conn_jobs = NODE_CONN_N_JOBS_WHEN_SIM_PARALLEL if RUN_SIM_PARALLEL else NODE_CONN_N_JOBS
+
+    for sim_idx, num_contacts in enumerate(contact_counts):
+        if MAX_SIMS_PER_GEOMETRY > 0 and sim_idx >= MAX_SIMS_PER_GEOMETRY:
+            break
+        num_contacts = int(num_contacts)
+        sim_tasks.append({
+            'label': label,
+            'sim_idx': sim_idx,
+            'force_data': np.asarray(contact_forces[start_idx_contact:start_idx_contact + num_contacts]).copy(),
+            'pos_array': np.asarray(
+                particle_positions[start_idx_particle:start_idx_particle + num_particles_per_sim]
+            ).copy(),
+            'stress_array': np.asarray(
+                stress_components[start_idx_particle:start_idx_particle + num_particles_per_sim]
+            ).copy(),
+            'roi_labels': np.asarray(
+                roi_array[start_idx_particle:start_idx_particle + num_particles_per_sim]
+            ).copy(),
+            'start_idx_contact': int(start_idx_contact),
+            'num_contacts': num_contacts,
+            'start_idx_particle': int(start_idx_particle),
+            'num_particles': int(num_particles_per_sim),
+            'node_conn_n_jobs': inner_node_conn_jobs,
+            'node_conn_verbose': NODE_CONN_VERBOSE,
+        })
+        start_idx_contact += num_contacts
+        start_idx_particle += num_particles_per_sim
+
+    if RUN_SIM_PARALLEL and len(sim_tasks) > 1:
+        print(f"Running {len(sim_tasks)} simulations for {label} in parallel with n_jobs={SIM_N_JOBS}...")
+        sim_results = Parallel(n_jobs=SIM_N_JOBS, verbose=SIM_PARALLEL_VERBOSE)(
+            delayed(_process_simulation_slice)(**task) for task in sim_tasks
+        )
+    else:
+        sim_results = [_process_simulation_slice(**task) for task in sim_tasks]
+
+    for task, result in zip(sim_tasks, sim_results):
+        slice_info.append(result['slice_entry'])
+        pair_edge_index_records.append(
+            _save_pair_edge_connectivity_records(
+                result['pair_edge_records'],
+                out_dir=out_path,
+                geometry=label,
+                sim_idx=task['sim_idx'],
+            )
+        )
+        graph_list_core.append(result['G_core'])
+        graph_list_full.append(result['G_full'])
+
+    graph_dict[label] = {'core': graph_list_core, 'full': graph_list_full}
+    print(f"→ {len(graph_list_core)} graphs built for {label}")
+
+# === Label high-force edges (now with reference-geometry option) ===
+high_force_edge_records, threshold_info = label_high_force_edges(
+    graph_dict,
+    use_global=USE_GLOBAL_HIGH_FORCE_THRESHOLD,
+    use_core_for_threshold=USE_CORE_FOR_THRESHOLD,
+    quantile_threshold=None,                 # set e.g. 0.95 to use percentile
+    reference_geometry_label=REFERENCE_GEOMETRY_LABEL,
+)
+
+# === Save outputs ===
+with open(os.path.join(out_path, 'graph_dict_labeled.pkl'), 'wb') as f:
+    pickle.dump(graph_dict, f)
+print("✅ Saved labeled graph dictionary.")
+
+df_high_force_edges = pd.DataFrame(high_force_edge_records)
+df_high_force_edges.to_csv(os.path.join(out_path, 'high_force_edges.csv'), index=False)
+print("✅ Saved high-force edge list.")
+
+with open(os.path.join(out_path, "simulation_slices.txt"), "w") as f:
+    header = ["label", "sim_idx", "start_idx_contact", "num_contacts", "end_idx_contact",
+              "start_idx_particle", "num_particles", "end_idx_particle"]
+    f.write("\t".join(header) + "\n")
+    for entry in slice_info:
+        values = [str(entry[k]) for k in header]
+        f.write("\t".join(values) + "\n")
+print("✅ Saved simulation slice metadata.")
+
+# Save threshold provenance for debugging / reproducibility
+with open(os.path.join(out_path, 'high_force_threshold_info.pkl'), 'wb') as f:
+    pickle.dump(threshold_info, f)
+print(f"✅ Threshold mode: {threshold_info['mode']}. Details: {threshold_info['thresholds']}")
+
+df_pair_edge_index = pd.DataFrame(pair_edge_index_records)
+df_pair_edge_index.to_csv(os.path.join(out_path, 'pair_edge_connectivity_index.csv'), index=False)
+print("✅ Saved pair edge-connectivity index.")
+
+df_nodes, df_edges, df_graphs, df_graph_arrays = _build_feature_tables(graph_dict)
+
+df_nodes.to_csv(os.path.join(out_path, 'node_features.csv'), index=False)
+print("✅ Saved node feature table.")
+
+df_edges.to_csv(os.path.join(out_path, 'edge_features.csv'), index=False)
+print("✅ Saved edge feature table.")
+
+df_graphs.to_csv(os.path.join(out_path, 'graph_features.csv'), index=False)
+print("✅ Saved graph feature table.")
+
+df_graph_arrays_serialized = df_graph_arrays.copy()
+for col in df_graph_arrays_serialized.columns:
+    if col not in {'geometry', 'sim_idx'}:
+        df_graph_arrays_serialized[col] = df_graph_arrays_serialized[col].map(_serialize_value)
+df_graph_arrays_serialized.to_csv(os.path.join(out_path, 'graph_feature_arrays.csv'), index=False)
+df_graph_arrays.to_pickle(os.path.join(out_path, 'graph_feature_arrays.pkl'))
+print("✅ Saved graph array table.")
+
+# === Plot distributions row with threshold(s) overlaid ===
+if PLOT_FORCE_DISTRIBUTIONS:
+    plot_force_distributions_row(
+        graph_dict,
+        threshold_info,
+        use_core_for_threshold=USE_CORE_FOR_THRESHOLD,
+        out_dir=out_path,
+        bins=FORCE_DIST_BINS,
+        logx=FORCE_DIST_LOGX,
+        angle_order=processed_angle_labels,
+        column_layout=FORCE_DIST_COLUMN,             # ← column layout
+        hist_linewidth=HIST_LINE_WIDTH,              # ← connected outline width
+        thr_linewidth=THRESHOLD_LINE_WIDTH,          # ← thinner threshold line
+        thr_color=THRESHOLD_LINE_COLOR,              # ← red threshold line
+    )
