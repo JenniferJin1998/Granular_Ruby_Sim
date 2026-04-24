@@ -13,7 +13,7 @@
 
 set -eo pipefail
 
-SCRIPT_DIR="/gpfs/accounts/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
 TMP_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts/jobs/tmp"
 OUTPUT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphGenerationTests/0deg_first2_2x16"
 RUN_OUTPUT_DIR="${OUTPUT_ROOT}/job_${SLURM_JOB_ID}"

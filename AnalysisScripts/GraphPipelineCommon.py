@@ -19,8 +19,11 @@ from scipy.sparse.linalg import eigsh
 
 # === Config ===
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-base_path = os.path.join(PROJECT_ROOT, 'Data', 'PeriodicBoudaries')
+PROJECT_ROOT = os.environ.get('GRAPHPIPE_PROJECT_ROOT', os.path.dirname(SCRIPT_DIR))
+base_path = os.environ.get(
+    'GRAPHPIPE_BASE_PATH',
+    os.path.join(PROJECT_ROOT, 'Data', 'PeriodicBoudaries'),
+)
 
 
 def _env_flag(name, default):
@@ -1741,223 +1744,382 @@ def _infer_particles_per_simulation(particle_positions, contact_counts, label):
 
     return total_particles // num_sims
 
-# === Main loop ===
-geometry_specs = _discover_geometry_folders(base_path)
-if not geometry_specs:
-    raise FileNotFoundError(f'No geometry folders found under {base_path}')
 
-processed_angle_labels = [label for label, _ in geometry_specs]
-print(f"Writing outputs to: {out_path}")
-print(f"Discovered geometries: {', '.join(processed_angle_labels)}")
-if GEOMETRY_FILTERS:
-    print(f"Geometry filter active: {', '.join(sorted(GEOMETRY_FILTERS))}")
-if MAX_SIMS_PER_GEOMETRY > 0:
-    print(f"Simulation cap active: first {MAX_SIMS_PER_GEOMETRY} simulations per geometry")
-
-for label, folder in geometry_specs:
-    folder_path = os.path.join(base_path, folder)
-    print(f"Processing {label} from {folder_path}...")
-    force_file = _find_mat_file(folder_path, ('Forces.mat', 'forces.mat'), ('force',))
-    count_file = _find_mat_file(folder_path, ('flengths.mat',), ('length',))
-    pos_file = _find_mat_file(folder_path, ('Pos.mat', 'pos.mat'), ('pos',))
-    stress_file = _find_mat_file(folder_path, ('AllStresses.mat',), ('stress',))
-    roi_file = _find_mat_file(folder_path, ('ROI.mat', 'roi.mat'), ('roi',), optional=True)
-
-    # Load forces
-    contact_forces = _load_mat_array(
-        force_file,
-        preferred_keys=('forces_collect',),
-        fallback_tokens=('force',),
-        description='force data',
-    )
-
-    # Load contact counts
-    contact_counts = np.asarray(
-        _load_mat_array(
-            count_file,
-            preferred_keys=('f_lengths',),
-            fallback_tokens=('length',),
-            description='force length data',
-        )
-    ).reshape(-1)
-
-    # Load positions
-    particle_positions = np.asarray(
-        _load_mat_array(
-            pos_file,
-            preferred_keys=('Pos_collect',),
-            fallback_tokens=('pos',),
-            description='position data',
-        )
-    )
-
-    # Load stresses
-    stress_components = np.asarray(
-        _load_mat_array(
-            stress_file,
-            preferred_keys=('sigma_collect',),
-            fallback_tokens=('sigma', 'stress'),
-            description='stress data',
-        )
-    )
-
-    # Load ROI (optional)
-    roi_array = None
-    if roi_file is not None:
-        try:
-            roi_array = _load_mat_array(
-                roi_file,
-                preferred_keys=('ROI',),
-                fallback_tokens=('roi',),
-                description='ROI data',
-            )
-        except Exception as exc:
-            print(f"Error loading {roi_file}: {exc}")
-            roi_array = None
-
-    num_particles_per_sim = _infer_particles_per_simulation(
-        particle_positions,
-        contact_counts,
-        label,
-    )
-    total_particles = num_particles_per_sim * len(contact_counts)
-    if stress_components.shape[0] != total_particles:
-        raise ValueError(
-            f'Stress rows ({stress_components.shape[0]}) do not match total particles '
-            f'({total_particles}) for {label}.'
-        )
-    roi_array = _prepare_roi_array(roi_array, total_particles, label)
-
-    print(
-        f"{label}: {len(contact_counts)} simulations, "
-        f"{num_particles_per_sim} particles/simulation, "
-        f"{int(np.sum(contact_counts))} contacts total."
-    )
-    if MAX_SIMS_PER_GEOMETRY > 0 and len(contact_counts) > MAX_SIMS_PER_GEOMETRY:
-        print(f"{label}: limiting test run to the first {MAX_SIMS_PER_GEOMETRY} of {len(contact_counts)} simulations.")
-
-    graph_list_core, graph_list_full = [], []
-    start_idx_contact = start_idx_particle = 0
-    sim_tasks = []
-    inner_node_conn_jobs = NODE_CONN_N_JOBS_WHEN_SIM_PARALLEL if RUN_SIM_PARALLEL else NODE_CONN_N_JOBS
-    pair_edge_export_n_jobs = (
-        PAIR_EDGE_EXPORT_N_JOBS_WHEN_SIM_PARALLEL if RUN_SIM_PARALLEL else PAIR_EDGE_EXPORT_N_JOBS
-    )
-
-    for sim_idx, num_contacts in enumerate(contact_counts):
-        if MAX_SIMS_PER_GEOMETRY > 0 and sim_idx >= MAX_SIMS_PER_GEOMETRY:
-            break
-        num_contacts = int(num_contacts)
-        sim_tasks.append({
-            'label': label,
-            'sim_idx': sim_idx,
-            'force_data': np.asarray(contact_forces[start_idx_contact:start_idx_contact + num_contacts]).copy(),
-            'pos_array': np.asarray(
-                particle_positions[start_idx_particle:start_idx_particle + num_particles_per_sim]
-            ).copy(),
-            'stress_array': np.asarray(
-                stress_components[start_idx_particle:start_idx_particle + num_particles_per_sim]
-            ).copy(),
-            'roi_labels': np.asarray(
-                roi_array[start_idx_particle:start_idx_particle + num_particles_per_sim]
-            ).copy(),
-            'start_idx_contact': int(start_idx_contact),
-            'num_contacts': num_contacts,
-            'start_idx_particle': int(start_idx_particle),
-            'num_particles': int(num_particles_per_sim),
-            'node_conn_n_jobs': inner_node_conn_jobs,
-            'node_conn_verbose': NODE_CONN_VERBOSE,
-            'pair_edge_out_dir': out_path,
-            'pair_edge_export_n_jobs': pair_edge_export_n_jobs,
-            'pair_edge_export_chunk_size': PAIR_EDGE_EXPORT_CHUNK_SIZE,
-        })
-        start_idx_contact += num_contacts
-        start_idx_particle += num_particles_per_sim
-
-    if RUN_SIM_PARALLEL and len(sim_tasks) > 1:
-        print(f"Running {len(sim_tasks)} simulations for {label} in parallel with n_jobs={SIM_N_JOBS}...")
-        sim_results = Parallel(n_jobs=SIM_N_JOBS, verbose=SIM_PARALLEL_VERBOSE)(
-            delayed(_process_simulation_slice)(**task) for task in sim_tasks
-        )
-    else:
-        sim_results = [_process_simulation_slice(**task) for task in sim_tasks]
-
-    for task, result in zip(sim_tasks, sim_results):
-        slice_info.append(result['slice_entry'])
-        pair_edge_index_records.append(result['pair_edge_index_entry'])
-        graph_list_core.append(result['G_core'])
-        graph_list_full.append(result['G_full'])
-
-    graph_dict[label] = {'core': graph_list_core, 'full': graph_list_full}
-    print(f"→ {len(graph_list_core)} graphs built for {label}")
-
-# === Label high-force edges (now with reference-geometry option) ===
-high_force_edge_records, threshold_info = label_high_force_edges(
-    graph_dict,
-    use_global=USE_GLOBAL_HIGH_FORCE_THRESHOLD,
-    use_core_for_threshold=USE_CORE_FOR_THRESHOLD,
-    quantile_threshold=None,                 # set e.g. 0.95 to use percentile
-    reference_geometry_label=REFERENCE_GEOMETRY_LABEL,
+# === Staged pipeline helpers ===
+PIPELINE_OUT_PATH = os.environ.get(
+    'GRAPHPIPE_OUT_PATH',
+    os.path.join(PROJECT_ROOT, 'AnalysisResults', 'PeriodicBoudaries', 'GraphPipeline'),
 )
+RAW_GRAPH_DIR = os.path.join(PIPELINE_OUT_PATH, 'raw_graphs')
+PATCH_DIR = os.path.join(PIPELINE_OUT_PATH, 'property_patches')
+PAIR_EDGE_DIR = os.path.join(PIPELINE_OUT_PATH, 'pair_edge_connectivity')
 
-# === Save outputs ===
-with open(os.path.join(out_path, 'graph_dict_labeled.pkl'), 'wb') as f:
-    pickle.dump(graph_dict, f)
-print("✅ Saved labeled graph dictionary.")
 
-df_high_force_edges = pd.DataFrame(high_force_edge_records)
-df_high_force_edges.to_csv(os.path.join(out_path, 'high_force_edges.csv'), index=False)
-print("✅ Saved high-force edge list.")
+def _safe_geometry_name(geometry):
+    return str(geometry).replace('/', '_')
 
-with open(os.path.join(out_path, "simulation_slices.txt"), "w") as f:
-    header = ["label", "sim_idx", "start_idx_contact", "num_contacts", "end_idx_contact",
-              "start_idx_particle", "num_particles", "end_idx_particle"]
-    f.write("\t".join(header) + "\n")
-    for entry in slice_info:
-        values = [str(entry[k]) for k in header]
-        f.write("\t".join(values) + "\n")
-print("✅ Saved simulation slice metadata.")
 
-# Save threshold provenance for debugging / reproducibility
-with open(os.path.join(out_path, 'high_force_threshold_info.pkl'), 'wb') as f:
-    pickle.dump(threshold_info, f)
-print(f"✅ Threshold mode: {threshold_info['mode']}. Details: {threshold_info['thresholds']}")
+def _graph_key(geometry, sim_idx):
+    return f'{_safe_geometry_name(geometry)}_sim_{int(sim_idx):03d}'
 
-df_pair_edge_index = pd.DataFrame(pair_edge_index_records)
-df_pair_edge_index.to_csv(os.path.join(out_path, 'pair_edge_connectivity_index.csv'), index=False)
-print("✅ Saved pair edge-connectivity index.")
 
-df_nodes, df_edges, df_graphs, df_graph_arrays = _build_feature_tables(graph_dict)
+def _raw_graph_path(geometry, sim_idx):
+    return os.path.join(RAW_GRAPH_DIR, f'{_graph_key(geometry, sim_idx)}_full.pkl')
 
-df_nodes.to_csv(os.path.join(out_path, 'node_features.csv'), index=False)
-print("✅ Saved node feature table.")
 
-df_edges.to_csv(os.path.join(out_path, 'edge_features.csv'), index=False)
-print("✅ Saved edge feature table.")
+def _patch_path(group, geometry, sim_idx):
+    return os.path.join(PATCH_DIR, group, f'{_graph_key(geometry, sim_idx)}_{group}.pkl')
 
-df_graphs.to_csv(os.path.join(out_path, 'graph_features.csv'), index=False)
-print("✅ Saved graph feature table.")
 
-df_graph_arrays_serialized = df_graph_arrays.copy()
-for col in df_graph_arrays_serialized.columns:
-    if col not in {'geometry', 'sim_idx'}:
-        df_graph_arrays_serialized[col] = df_graph_arrays_serialized[col].map(_serialize_value)
-df_graph_arrays_serialized.to_csv(os.path.join(out_path, 'graph_feature_arrays.csv'), index=False)
-df_graph_arrays.to_pickle(os.path.join(out_path, 'graph_feature_arrays.pkl'))
-print("✅ Saved graph array table.")
+def _save_pickle(obj, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'wb') as handle:
+        pickle.dump(obj, handle)
 
-# === Plot distributions row with threshold(s) overlaid ===
-if PLOT_FORCE_DISTRIBUTIONS:
-    plot_force_distributions_row(
-        graph_dict,
-        threshold_info,
-        use_core_for_threshold=USE_CORE_FOR_THRESHOLD,
-        out_dir=out_path,
-        bins=FORCE_DIST_BINS,
-        logx=FORCE_DIST_LOGX,
-        angle_order=processed_angle_labels,
-        column_layout=FORCE_DIST_COLUMN,             # ← column layout
-        hist_linewidth=HIST_LINE_WIDTH,              # ← connected outline width
-        thr_linewidth=THRESHOLD_LINE_WIDTH,          # ← thinner threshold line
-        thr_color=THRESHOLD_LINE_COLOR,              # ← red threshold line
+
+def _load_pickle(path):
+    with open(path, 'rb') as handle:
+        return pickle.load(handle)
+
+
+def _build_full_graph_from_slice(
+    label,
+    sim_idx,
+    force_data,
+    pos_array,
+    stress_array,
+    roi_labels,
+    num_contacts,
+    num_particles,
+):
+    G = nx.Graph()
+    for pid in range(num_particles):
+        pos = tuple(pos_array[pid])
+        s11, s22, s33, s23, s13, s12 = stress_array[pid]
+        hydro = (s11 + s22 + s33) / 3.0
+        vm = np.sqrt(
+            0.5 * ((s11 - s22) ** 2 + (s22 - s33) ** 2 + (s33 - s11) ** 2)
+            + 3 * (s12 ** 2 + s13 ** 2 + s23 ** 2)
+        )
+        in_center = bool((roi_labels[pid] == 1).item() if np.ndim(roi_labels[pid]) else (roi_labels[pid] == 1))
+        G.add_node(
+            pid,
+            position=pos,
+            is_wall=False,
+            in_center_region=in_center,
+            stress_11=s11,
+            stress_22=s22,
+            stress_33=s33,
+            stress_23=s23,
+            stress_13=s13,
+            stress_12=s12,
+            stress_vm=vm,
+            stress_hydro=hydro,
+        )
+
+    wall_node_counter = 0
+    wall_pid_map = {}
+
+    def get_node_id(pid, which_pid, contact_idx, wall_node_counter):
+        if pid < 0:
+            key = (sim_idx, contact_idx, which_pid)
+            if key not in wall_pid_map:
+                wall_id = f"{label}_wall_{sim_idx}_{wall_node_counter}"
+                wall_pid_map[key] = wall_id
+                wall_node_counter += 1
+            else:
+                wall_id = wall_pid_map[key]
+            if wall_id not in G:
+                G.add_node(wall_id)
+            G.nodes[wall_id]['is_wall'] = True
+            G.nodes[wall_id]['wall_label'] = pid
+            return wall_id, wall_node_counter
+        return pid, wall_node_counter
+
+    for contact_idx, row in enumerate(force_data):
+        pid1, pid2 = int(row[1]), int(row[2])
+        node1, wall_node_counter = get_node_id(pid1, 'pid1', contact_idx, wall_node_counter)
+        node2, wall_node_counter = get_node_id(pid2, 'pid2', contact_idx, wall_node_counter)
+        if node1 in G and node2 in G:
+            n_vec = (row[10], row[11], row[12])
+            angle_deg = np.degrees(np.arccos(np.abs(np.clip(n_vec[2], -1.0, 1.0))))
+            is_wall_contact = G.nodes[node1].get('is_wall', False) or G.nodes[node2].get('is_wall', False)
+            G.add_edge(
+                node1,
+                node2,
+                contact_location=(row[3], row[4], row[5]),
+                delta=row[6],
+                delta_t=row[7],
+                normal_force=row[8],
+                tangential_force=row[9],
+                n_unit=n_vec,
+                t_unit=(row[13], row[14], row[15]),
+                angle_with_zz=angle_deg,
+                is_wall_contact=is_wall_contact,
+            )
+
+    G.graph['sim_idx'] = sim_idx
+    G.graph['angle_label'] = label
+    G.graph['num_particles'] = num_particles
+    G.graph['num_contacts'] = int(num_contacts)
+    return G
+
+
+def _make_core_graph(G_full):
+    core_nodes = [n for n, d in G_full.nodes(data=True) if not d.get('is_wall', False)]
+    G_core = G_full.subgraph(core_nodes).copy()
+    wall_nodes_with_walls = sum(1 for _, d in G_full.nodes(data=True) if d.get('is_wall', False))
+    wall_contacts_with_walls = sum(1 for _, _, d in G_full.edges(data=True) if d.get('is_wall_contact', False))
+
+    _set_dual_graph_attr(G_core, G_full, 'num_nodes', G_core.number_of_nodes(), G_full.number_of_nodes())
+    _set_dual_graph_attr(G_core, G_full, 'num_edges', G_core.number_of_edges(), G_full.number_of_edges())
+    _set_dual_graph_attr(G_core, G_full, 'wall_nodes', 0, wall_nodes_with_walls)
+    _set_dual_graph_attr(G_core, G_full, 'wall_contacts', 0, wall_contacts_with_walls)
+    return G_core
+
+
+def _empty_property_patch(group, geometry, sim_idx):
+    return {
+        'group': group,
+        'geometry': geometry,
+        'sim_idx': int(sim_idx),
+        'graph_attrs': {},
+        'node_attrs': {},
+        'edge_attrs': {},
+        'extra': {},
+    }
+
+
+def _edge_key(u, v):
+    return json.dumps([u, v], default=_json_default)
+
+
+def _decode_edge_key(key):
+    edge = json.loads(key)
+    return edge[0], edge[1]
+
+
+def _set_node_patch(patch, node, attrs):
+    patch['node_attrs'].setdefault(node, {}).update(attrs)
+
+
+def _set_edge_patch(patch, u, v, attrs):
+    patch['edge_attrs'].setdefault(_edge_key(u, v), {}).update(attrs)
+
+
+def _patch_from_graphs(group, G_full, G_core):
+    patch = _empty_property_patch(group, G_full.graph.get('angle_label'), G_full.graph.get('sim_idx'))
+    patch['graph_attrs'].update({
+        key: value
+        for key, value in G_full.graph.items()
+        if key not in {'angle_label', 'sim_idx'}
+    })
+    for node, attrs in G_core.nodes(data=True):
+        patch['node_attrs'][node] = dict(attrs)
+    for u, v, attrs in G_core.edges(data=True):
+        patch['edge_attrs'][_edge_key(u, v)] = dict(attrs)
+    return patch
+
+
+def compute_topology_spectral_patch(G_full):
+    G_work = G_full.copy()
+    G_core = _make_core_graph(G_work)
+
+    degree_core = dict(G_core.degree())
+    closeness_core = nx.closeness_centrality(G_core)
+    betweenness_core = nx.betweenness_centrality(G_core)
+    clustering_core = nx.clustering(G_core)
+    degree_full = dict(G_work.degree())
+    closeness_full = nx.closeness_centrality(G_work)
+    betweenness_full = nx.betweenness_centrality(G_work)
+    clustering_full = nx.clustering(G_work)
+    avg_neighbor_degree_core = nx.average_neighbor_degree(G_core)
+    avg_neighbor_degree_full = nx.average_neighbor_degree(G_work)
+
+    edge_conn_no_walls, node_conn_no_walls = _safe_graph_connectivities(G_core)
+    edge_conn_with_walls, node_conn_with_walls = _safe_graph_connectivities(G_work)
+    _set_dual_graph_attr(G_core, G_work, 'assortativity', _safe_degree_assortativity_coefficient(G_core), _safe_degree_assortativity_coefficient(G_work))
+    _set_dual_graph_attr(G_core, G_work, 'edge_connectivity_graph', edge_conn_no_walls, edge_conn_with_walls)
+    _set_dual_graph_attr(G_core, G_work, 'node_connectivity_graph', node_conn_no_walls, node_conn_with_walls)
+
+    core_distance_metrics = _compute_graph_distance_metrics(G_core)
+    full_distance_metrics = _compute_graph_distance_metrics(G_work)
+    for key in core_distance_metrics:
+        _set_dual_graph_attr(G_core, G_work, key, core_distance_metrics[key], full_distance_metrics[key])
+
+    if RUN_SPECTRAL_ANALYSIS:
+        core_spec_nodes, core_eigvals, core_eigvecs = _compute_adjacency_eigenpairs(G_core, num_eigenpairs=SPECTRAL_NUM_EIGENPAIRS)
+        full_spec_nodes, full_eigvals, full_eigvecs = _compute_adjacency_eigenpairs(G_work, num_eigenpairs=SPECTRAL_NUM_EIGENPAIRS)
+        _set_dual_graph_attr(G_core, G_work, 'eigenvalues', core_eigvals.tolist(), full_eigvals.tolist())
+        _set_dual_graph_attr(G_core, G_work, 'eigenvector_nodes', core_spec_nodes, full_spec_nodes)
+        _set_dual_graph_attr(G_core, G_work, 'eigenvectors', core_eigvecs.tolist(), full_eigvecs.tolist())
+        _set_dual_graph_attr(G_core, G_work, 'spectral_radius', float(core_eigvals[0]) if core_eigvals.size else np.nan, float(full_eigvals[0]) if full_eigvals.size else np.nan)
+
+        core_lap_bundle = _compute_laplacian_bundle(G_core, num_eigenpairs=SPECTRAL_NUM_EIGENPAIRS)
+        full_lap_bundle = _compute_laplacian_bundle(G_work, num_eigenpairs=SPECTRAL_NUM_EIGENPAIRS)
+        _set_dual_graph_attr(G_core, G_work, 'lap_eigenvalues', core_lap_bundle['lap_eigenvalues'].tolist(), full_lap_bundle['lap_eigenvalues'].tolist())
+        _set_dual_graph_attr(G_core, G_work, 'lap_eigenvector_nodes', core_lap_bundle['node_order'], full_lap_bundle['node_order'])
+        _set_dual_graph_attr(G_core, G_work, 'lap_eigenvectors', core_lap_bundle['lap_eigenvectors'].tolist(), full_lap_bundle['lap_eigenvectors'].tolist())
+        _set_dual_graph_attr(G_core, G_work, 'norm_lap_eigenvalues', core_lap_bundle['norm_lap_eigenvalues'].tolist(), full_lap_bundle['norm_lap_eigenvalues'].tolist())
+        _set_dual_graph_attr(G_core, G_work, 'alg_connectivity', core_lap_bundle['alg_connectivity'], full_lap_bundle['alg_connectivity'])
+        _set_dual_graph_attr(G_core, G_work, 'fiedler_value', core_lap_bundle['fiedler_value'], full_lap_bundle['fiedler_value'])
+        _set_dual_graph_attr(G_core, G_work, 'fiedler_nodes', core_lap_bundle['node_order'], full_lap_bundle['node_order'])
+        _set_dual_graph_attr(G_core, G_work, 'fiedler_vector', core_lap_bundle['fiedler_vector'].tolist(), full_lap_bundle['fiedler_vector'].tolist())
+
+        if core_eigvecs.size:
+            for idx, node in enumerate(core_spec_nodes):
+                G_core.nodes[node]['principal_eigenvector'] = float(core_eigvecs[:, 0][idx])
+        if full_eigvecs.size:
+            for idx, node in enumerate(full_spec_nodes):
+                G_work.nodes[node]['principal_eigenvector_with_walls'] = float(full_eigvecs[:, 0][idx])
+        for idx, node in enumerate(core_lap_bundle['node_order']):
+            value = core_lap_bundle['fiedler_vector'][idx]
+            G_core.nodes[node]['fiedler'] = float(value) if np.isfinite(value) else np.nan
+        for idx, node in enumerate(full_lap_bundle['node_order']):
+            value = full_lap_bundle['fiedler_vector'][idx]
+            G_work.nodes[node]['fiedler_with_walls'] = float(value) if np.isfinite(value) else np.nan
+
+    for node in G_core.nodes():
+        G_core.nodes[node]['degree'] = degree_core.get(node, 0)
+        G_core.nodes[node]['closeness'] = closeness_core.get(node, 0.0)
+        G_core.nodes[node]['betweenness'] = betweenness_core.get(node, 0.0)
+        G_core.nodes[node]['clustering'] = clustering_core.get(node, 0.0)
+        G_core.nodes[node]['avg_neighbor_degree'] = avg_neighbor_degree_core.get(node, 0.0)
+        G_core.nodes[node]['degree_with_walls'] = degree_full.get(node, 0)
+        G_core.nodes[node]['closeness_with_walls'] = closeness_full.get(node, 0.0)
+        G_core.nodes[node]['betweenness_with_walls'] = betweenness_full.get(node, 0.0)
+        G_core.nodes[node]['clustering_with_walls'] = clustering_full.get(node, 0.0)
+        G_core.nodes[node]['avg_neighbor_degree_with_walls'] = avg_neighbor_degree_full.get(node, 0.0)
+        G_core.nodes[node]['principal_eigenvector_with_walls'] = G_work.nodes[node].get('principal_eigenvector_with_walls', np.nan)
+        G_core.nodes[node]['fiedler_with_walls'] = G_work.nodes[node].get('fiedler_with_walls', np.nan)
+
+    return _patch_from_graphs('topology', G_work, G_core)
+
+
+def compute_loop_patch(G_full):
+    G_work = G_full.copy()
+    G_core = _make_core_graph(G_work)
+
+    core_loop_metrics = _compute_loop_metrics(G_core)
+    full_loop_metrics = _compute_loop_metrics(G_work)
+    for key in sorted(set(core_loop_metrics) | set(full_loop_metrics)):
+        if key.startswith('loop_') and key not in {'loop_total', 'loop_mean', 'loop_sizes', 'loop_counts'}:
+            default = 0
+        elif key == 'loop_sizes':
+            default = []
+        elif key == 'loop_counts':
+            default = {}
+        else:
+            default = np.nan
+        _set_dual_graph_attr(G_core, G_work, key, core_loop_metrics.get(key, default), full_loop_metrics.get(key, default))
+
+    return _patch_from_graphs('loop', G_work, G_core)
+
+
+def compute_pair_edge_patch(G_full, pair_edge_out_dir, n_jobs=1, chunk_size=32):
+    G_work = G_full.copy()
+    G_core = _make_core_graph(G_work)
+    gh_core_map = _build_gomory_hu_map(G_core)
+    gh_full_map = _build_gomory_hu_map(G_work)
+    pair_entry = _save_pair_edge_connectivity_records_parallel(
+        G_core,
+        G_work,
+        gh_core_map,
+        gh_full_map,
+        out_dir=pair_edge_out_dir,
+        geometry=G_work.graph.get('angle_label'),
+        sim_idx=G_work.graph.get('sim_idx'),
+        n_jobs=n_jobs,
+        chunk_size=chunk_size,
     )
+    patch = _empty_property_patch('pair_edge', G_work.graph.get('angle_label'), G_work.graph.get('sim_idx'))
+    patch['extra']['pair_edge_index_entry'] = pair_entry
+    for u, v in G_core.edges():
+        _set_edge_patch(patch, u, v, {
+            'edge_connectivity': _local_edge_connectivity(G_core, gh_core_map, u, v),
+            'edge_connectivity_with_walls': _local_edge_connectivity(G_work, gh_full_map, u, v),
+        })
+    return patch
+
+
+def compute_node_connectivity_patch(G_full, n_jobs=-1, verbose=0):
+    G_core = _make_core_graph(G_full.copy())
+    edges_list = list(G_core.edges())
+
+    def _compute_node_connectivity_pair(u, v, G):
+        return (u, v, nx.node_connectivity(G, u, v))
+
+    results_core = Parallel(n_jobs=n_jobs, verbose=verbose)(
+        delayed(_compute_node_connectivity_pair)(u, v, G_core) for u, v in edges_list
+    ) if edges_list else []
+    results_full = Parallel(n_jobs=n_jobs, verbose=verbose)(
+        delayed(_compute_node_connectivity_pair)(u, v, G_full) for u, v in edges_list
+    ) if edges_list else []
+
+    patch = _empty_property_patch('node_connectivity', G_full.graph.get('angle_label'), G_full.graph.get('sim_idx'))
+    for u, v, nc in results_core:
+        _set_edge_patch(patch, u, v, {'node_connectivity': nc})
+    for u, v, nc in results_full:
+        _set_edge_patch(patch, u, v, {'node_connectivity_with_walls': nc})
+    return patch
+
+
+def compute_curvature_patch(G_full):
+    G_work = G_full.copy()
+    G_core = _make_core_graph(G_work)
+    orc_full = OllivierRicci(G_work.copy(), alpha=0.5, verbose="ERROR")
+    orc_full.compute_ricci_curvature()
+    for u, v, d in orc_full.G.edges(data=True):
+        if u in G_core.nodes and v in G_core.nodes and G_core.has_edge(u, v):
+            G_core[u][v]['curvature_with_walls'] = d.get('ricciCurvature', 0.0)
+
+    orc_core = OllivierRicci(G_core.copy(), alpha=0.5, verbose="ERROR")
+    orc_core.compute_ricci_curvature()
+    for u, v, d in orc_core.G.edges(data=True):
+        G_core[u][v]['curvature_no_walls'] = d.get('ricciCurvature', 0.0)
+
+    def assign_avg_curv(G, edge_key, node_key):
+        curv_sum = defaultdict(float)
+        count = defaultdict(int)
+        for a, b, ed in G.edges(data=True):
+            if edge_key in ed:
+                curv_sum[a] += ed[edge_key]
+                curv_sum[b] += ed[edge_key]
+                count[a] += 1
+                count[b] += 1
+        for n in G.nodes:
+            G.nodes[n][node_key] = curv_sum[n] / count[n] if count[n] > 0 else 0.0
+
+    assign_avg_curv(G_core, 'curvature_with_walls', 'avg_curvature_with_walls')
+    assign_avg_curv(G_core, 'curvature_no_walls', 'avg_curvature_no_walls')
+    return _patch_from_graphs('curvature', G_work, G_core)
+
+
+def compute_nfd_patch(G_full):
+    G_core = _make_core_graph(G_full.copy())
+    nfd_node_metrics, nfd_graph_metrics = _compute_unweighted_nfd_bundle(
+        G_core,
+        q_values=NFD_Q_VALUES,
+        spectrum_q_window=NFD_SPECTRUM_Q_WINDOW,
+    )
+    patch = _empty_property_patch('nfd', G_full.graph.get('angle_label'), G_full.graph.get('sim_idx'))
+    patch['graph_attrs'].update(nfd_graph_metrics)
+    for node, vals in nfd_node_metrics.items():
+        _set_node_patch(patch, node, vals)
+    return patch
+
+
+def apply_property_patch(G_full, G_core, patch):
+    G_full.graph.update(patch.get('graph_attrs', {}))
+    G_core.graph.update(patch.get('graph_attrs', {}))
+    for node, attrs in patch.get('node_attrs', {}).items():
+        if node in G_full.nodes:
+            G_full.nodes[node].update(attrs)
+        if node in G_core.nodes:
+            G_core.nodes[node].update(attrs)
+    for encoded_edge, attrs in patch.get('edge_attrs', {}).items():
+        u, v = _decode_edge_key(encoded_edge)
+        if G_full.has_edge(u, v):
+            G_full[u][v].update(attrs)
+        if G_core.has_edge(u, v):
+            G_core[u][v].update(attrs)

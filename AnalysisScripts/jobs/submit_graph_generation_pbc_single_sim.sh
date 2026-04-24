@@ -6,14 +6,14 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=36
 #SBATCH --mem=128gb
-#SBATCH --time=20:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts/jobs/logs/graphgen_pbc_1sim_%j.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=yfjin@umich.edu
 
 set -eo pipefail
 
-SCRIPT_DIR="/gpfs/accounts/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
 TMP_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts/jobs/tmp"
 OUTPUT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphGenerationTests/single_sim_all_cpus"
 RUN_OUTPUT_DIR="${OUTPUT_ROOT}/job_${SLURM_JOB_ID}"
@@ -34,6 +34,8 @@ export GRAPHGEN_MAX_SIMS_PER_GEOMETRY=1
 export GRAPHGEN_RUN_SIM_PARALLEL=0
 export GRAPHGEN_NODE_CONN_N_JOBS=36
 export GRAPHGEN_NODE_CONN_VERBOSE=5
+export GRAPHGEN_PAIR_EDGE_EXPORT_N_JOBS=36
+export GRAPHGEN_PAIR_EDGE_EXPORT_CHUNK_SIZE=24
 export GRAPHGEN_ENABLE_TIMING_LOGS=1
 export GRAPHGEN_OUT_PATH="${RUN_OUTPUT_DIR}"
 
@@ -55,6 +57,8 @@ echo "GRAPHGEN_GEOMETRY_FILTER=${GRAPHGEN_GEOMETRY_FILTER}"
 echo "GRAPHGEN_MAX_SIMS_PER_GEOMETRY=${GRAPHGEN_MAX_SIMS_PER_GEOMETRY}"
 echo "GRAPHGEN_RUN_SIM_PARALLEL=${GRAPHGEN_RUN_SIM_PARALLEL}"
 echo "GRAPHGEN_NODE_CONN_N_JOBS=${GRAPHGEN_NODE_CONN_N_JOBS}"
+echo "GRAPHGEN_PAIR_EDGE_EXPORT_N_JOBS=${GRAPHGEN_PAIR_EDGE_EXPORT_N_JOBS}"
+echo "GRAPHGEN_PAIR_EDGE_EXPORT_CHUNK_SIZE=${GRAPHGEN_PAIR_EDGE_EXPORT_CHUNK_SIZE}"
 echo "GRAPHGEN_OUT_PATH=${GRAPHGEN_OUT_PATH}"
 echo "========================================="
 
