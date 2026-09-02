@@ -1,6 +1,6 @@
 # GraphGeneration.py Data Structure and Feature Reference
 
-This document describes the outputs written by [GraphGeneration.py](/Users/yfjin/Desktop/PhD/CHESS02142024/GraphNetwork/AnalysisScripts/Graph/GraphGeneration.py), how the graph data are organized in memory, and how each derived property is computed.
+This document describes the outputs written by `run_whole/GraphGeneration.py`, how the graph data are organized in memory, and how each derived property is computed.
 
 It covers the simulation pipeline for the four geometries:
 

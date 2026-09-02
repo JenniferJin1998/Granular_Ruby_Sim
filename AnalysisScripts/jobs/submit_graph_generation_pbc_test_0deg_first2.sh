@@ -14,6 +14,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+RUN_WHOLE_DIR="${SCRIPT_DIR}/RunWhole"
 TMP_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts/jobs/tmp"
 OUTPUT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphGenerationTests/0deg_first2_2x16"
 RUN_OUTPUT_DIR="${OUTPUT_ROOT}/job_${SLURM_JOB_ID}"
@@ -60,6 +61,7 @@ echo "GRAPHGEN_NODE_CONN_N_JOBS_WHEN_SIM_PARALLEL=${GRAPHGEN_NODE_CONN_N_JOBS_WH
 echo "GRAPHGEN_OUT_PATH=${GRAPHGEN_OUT_PATH}"
 echo "========================================="
 
+cd "${RUN_WHOLE_DIR}"
 python GraphGeneration.py
 
 echo "========================================="

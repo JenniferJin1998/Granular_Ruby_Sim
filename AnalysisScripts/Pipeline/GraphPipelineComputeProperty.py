@@ -3,7 +3,6 @@ import os
 import pandas as pd
 
 from GraphPipelineCommon import (
-    PAIR_EDGE_DIR,
     PAIR_EDGE_EXPORT_CHUNK_SIZE,
     PAIR_EDGE_EXPORT_N_JOBS,
     NODE_CONN_N_JOBS,
@@ -18,6 +17,7 @@ from GraphPipelineCommon import (
     _patch_path,
     _raw_graph_path,
     _save_pickle,
+    _simulation_dir,
     PIPELINE_OUT_PATH,
 )
 
@@ -49,7 +49,10 @@ def compute_patch(group, G_full):
     if group == 'pair_edge':
         return compute_pair_edge_patch(
             G_full,
-            pair_edge_out_dir=PIPELINE_OUT_PATH,
+            pair_edge_out_dir=_simulation_dir(
+                G_full.graph.get('angle_label'),
+                G_full.graph.get('sim_idx'),
+            ),
             n_jobs=PAIR_EDGE_EXPORT_N_JOBS,
             chunk_size=PAIR_EDGE_EXPORT_CHUNK_SIZE,
         )
@@ -70,7 +73,6 @@ def run_property_group(group, geometry=None, sim_idx=None):
     if group not in GROUPS:
         raise ValueError(f'Unknown property group {group!r}; expected one of {sorted(GROUPS)}')
 
-    os.makedirs(PAIR_EDGE_DIR, exist_ok=True)
     slice_df = _load_slice_index()
     rows = _selected_rows(slice_df, geometry=geometry, sim_idx=sim_idx)
     if rows.empty:

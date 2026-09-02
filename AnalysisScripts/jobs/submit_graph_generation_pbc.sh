@@ -14,6 +14,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+RUN_WHOLE_DIR="${SCRIPT_DIR}/RunWhole"
 TMP_DIR="${SCRIPT_DIR}/jobs/tmp"
 OUTPUT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphGeneration"
 RUN_OUTPUT_DIR="${OUTPUT_ROOT}/job_${SLURM_JOB_ID}"
@@ -55,6 +56,7 @@ echo "MPLCONFIGDIR=${MPLCONFIGDIR}"
 echo "JOBLIB_TEMP_FOLDER=${JOBLIB_TEMP_FOLDER}"
 echo "========================================="
 
+cd "${RUN_WHOLE_DIR}"
 python GraphGeneration.py
 
 echo "========================================="

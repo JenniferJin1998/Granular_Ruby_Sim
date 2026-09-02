@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 
 from GraphPipelineCommon import (
-    RAW_GRAPH_DIR,
     base_path,
     _build_full_graph_from_slice,
     _discover_geometry_folders,
@@ -14,11 +13,11 @@ from GraphPipelineCommon import (
     _raw_graph_path,
     _save_pickle,
     MAX_SIMS_PER_GEOMETRY,
+    PIPELINE_OUT_PATH,
 )
 
 
 def main():
-    os.makedirs(RAW_GRAPH_DIR, exist_ok=True)
     slice_records = []
 
     geometry_specs = _discover_geometry_folders(base_path)
@@ -88,7 +87,7 @@ def main():
             start_idx_contact += num_contacts
             start_idx_particle += num_particles_per_sim
 
-    slices_path = os.path.join(os.path.dirname(RAW_GRAPH_DIR), 'simulation_slices.csv')
+    slices_path = os.path.join(PIPELINE_OUT_PATH, 'simulation_slices.csv')
     pd.DataFrame(slice_records).to_csv(slices_path, index=False)
     print(f"Saved slice index: {slices_path}")
 

@@ -1750,6 +1750,7 @@ PIPELINE_OUT_PATH = os.environ.get(
     'GRAPHPIPE_OUT_PATH',
     os.path.join(PROJECT_ROOT, 'AnalysisResults', 'PeriodicBoudaries', 'GraphPipeline'),
 )
+SIM_OUTPUT_DIR = os.path.join(PIPELINE_OUT_PATH, 'simulations')
 RAW_GRAPH_DIR = os.path.join(PIPELINE_OUT_PATH, 'raw_graphs')
 PATCH_DIR = os.path.join(PIPELINE_OUT_PATH, 'property_patches')
 PAIR_EDGE_DIR = os.path.join(PIPELINE_OUT_PATH, 'pair_edge_connectivity')
@@ -1763,12 +1764,16 @@ def _graph_key(geometry, sim_idx):
     return f'{_safe_geometry_name(geometry)}_sim_{int(sim_idx):03d}'
 
 
+def _simulation_dir(geometry, sim_idx):
+    return os.path.join(SIM_OUTPUT_DIR, _graph_key(geometry, sim_idx))
+
+
 def _raw_graph_path(geometry, sim_idx):
-    return os.path.join(RAW_GRAPH_DIR, f'{_graph_key(geometry, sim_idx)}_full.pkl')
+    return os.path.join(_simulation_dir(geometry, sim_idx), 'raw_graph_full.pkl')
 
 
 def _patch_path(group, geometry, sim_idx):
-    return os.path.join(PATCH_DIR, group, f'{_graph_key(geometry, sim_idx)}_{group}.pkl')
+    return os.path.join(_simulation_dir(geometry, sim_idx), 'property_patches', f'{group}.pkl')
 
 
 def _save_pickle(obj, path):

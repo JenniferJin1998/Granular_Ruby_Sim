@@ -14,6 +14,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+PIPELINE_DIR="${SCRIPT_DIR}/Pipeline"
 TMP_DIR="${SCRIPT_DIR}/jobs/tmp"
 PIPE_OUT="${GRAPHPIPE_OUT_PATH:-/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphPipeline}"
 PROPERTY="${GRAPHPIPE_PROPERTY:?Set GRAPHPIPE_PROPERTY to topology, loop, pair_edge, node_connectivity, curvature, or nfd}"
@@ -38,5 +39,5 @@ export MPLCONFIGDIR="${TMP_DIR}/mpl_${SLURM_JOB_ID}"
 export JOBLIB_TEMP_FOLDER="${TMP_DIR}/joblib_${SLURM_JOB_ID}"
 mkdir -p "${MPLCONFIGDIR}" "${JOBLIB_TEMP_FOLDER}" "${GRAPHPIPE_OUT_PATH}"
 
-cd "${SCRIPT_DIR}"
+cd "${PIPELINE_DIR}"
 python GraphPipelineComputeProperty.py --group "${PROPERTY}"
