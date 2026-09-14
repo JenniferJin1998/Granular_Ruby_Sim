@@ -29,8 +29,8 @@ from scipy.spatial import distance as spatial_distance
 
 DATE_TAG = "2026-08-03"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_INPUT = PROJECT_ROOT / "AnalysisResults" / "PeriodicBoudaries" / DATE_TAG / "GraphPipeline"
-DEFAULT_OUTPUT = PROJECT_ROOT / "AnalysisResults" / "PeriodicBoudaries" / DATE_TAG / "AngleComparison"
+DEFAULT_INPUT = PROJECT_ROOT / "AnalysisResults" / "periodic_boundaries" / DATE_TAG / "graph_features"
+DEFAULT_OUTPUT = PROJECT_ROOT / "AnalysisResults" / "periodic_boundaries" / DATE_TAG / "angle_comparison"
 ANGLES = ("0deg", "30deg")
 
 ID_COLUMNS = {

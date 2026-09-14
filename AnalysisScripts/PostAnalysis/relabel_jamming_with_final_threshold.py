@@ -18,20 +18,20 @@ ANALYSIS_SCRIPTS_DIR = SCRIPT_DIR.parent
 DEFAULT_FINAL_DIR = (
     ANALYSIS_SCRIPTS_DIR.parent
     / "AnalysisResults"
-    / "FinalLoadState"
-    / "FullGraph_2mean_ref_geom"
+    / "final_load"
+    / "graph_features"
 )
 DEFAULT_JAMMING_DIR = (
     ANALYSIS_SCRIPTS_DIR.parent
     / "AnalysisResults"
-    / "JammingState"
-    / "FullGraph_2mean_ref_geom"
+    / "jamming"
+    / "graph_features"
 )
 DEFAULT_OUT_DIR = (
     ANALYSIS_SCRIPTS_DIR.parent
     / "AnalysisResults"
-    / "JammingState"
-    / "FullGraph_final_load_threshold"
+    / "jamming"
+    / "graph_features_final_threshold"
 )
 
 
@@ -194,7 +194,7 @@ def relabel_graph_dict(graph_dict: dict, threshold: float):
         for G_full, G_core in zip(full_graphs, core_graphs):
             high_force_records.extend(tag_high_force_edges_and_nodes(G_full, G_core, threshold))
     threshold_info = {
-        "mode": "external_reference[FinalLoadState/0deg]",
+        "mode": "external_reference[final_load/0deg]",
         "thresholds": {"0deg": threshold},
         "source": str(DEFAULT_FINAL_DIR),
     }
@@ -227,7 +227,7 @@ def copy_context_files(src_dir: Path, out_dir: Path) -> None:
 
 
 def write_readme(out_dir: Path, final_dir: Path, jamming_dir: Path, threshold: float) -> None:
-    text = f"""# JammingState with final-load high-force threshold
+    text = f"""# Jamming state with final-load high-force threshold
 
 This folder was generated from:
 

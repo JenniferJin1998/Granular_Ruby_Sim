@@ -7,16 +7,16 @@
 #SBATCH --cpus-per-task=20
 #SBATCH --mem=128gb
 #SBATCH --time=36:00:00
-#SBATCH --output=/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts/jobs/logs/graph_generation_pbc_%j.log
+#SBATCH --output=/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts/jobs/logs/graph_generation_pbc_%j.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=yfjin@umich.edu
 
 set -eo pipefail
 
-SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts"
 RUN_WHOLE_DIR="${SCRIPT_DIR}/RunWhole"
 TMP_DIR="${SCRIPT_DIR}/jobs/tmp"
-OUTPUT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphGeneration"
+OUTPUT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/graph_generation"
 RUN_OUTPUT_DIR="${OUTPUT_ROOT}/job_${SLURM_JOB_ID}"
 
 export PS1="${PS1:-}"

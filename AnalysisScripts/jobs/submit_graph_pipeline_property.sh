@@ -7,16 +7,16 @@
 #SBATCH --cpus-per-task=36
 #SBATCH --mem=128gb
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts/jobs/logs/graphpipe_property_%x_%j.log
+#SBATCH --output=/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts/jobs/logs/graphpipe_property_%x_%j.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=yfjin@umich.edu
 
 set -eo pipefail
 
-SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts"
 PIPELINE_DIR="${SCRIPT_DIR}/Pipeline"
 TMP_DIR="${SCRIPT_DIR}/jobs/tmp"
-PIPE_OUT="${GRAPHPIPE_OUT_PATH:-/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphPipeline}"
+PIPE_OUT="${GRAPHPIPE_OUT_PATH:-/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/graph_features}"
 PROPERTY="${GRAPHPIPE_PROPERTY:?Set GRAPHPIPE_PROPERTY to topology, loop, pair_edge, node_connectivity, curvature, or nfd}"
 
 export PS1="${PS1:-}"
@@ -24,7 +24,7 @@ source /home/yfjin/Research/anaconda3/etc/profile.d/conda.sh
 conda activate graph_analysis
 set -u
 
-export GRAPHPIPE_PROJECT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim"
+export GRAPHPIPE_PROJECT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608"
 export GRAPHPIPE_OUT_PATH="${PIPE_OUT}"
 export GRAPHGEN_NODE_CONN_N_JOBS="${GRAPHGEN_NODE_CONN_N_JOBS:-36}"
 export GRAPHGEN_NODE_CONN_VERBOSE="${GRAPHGEN_NODE_CONN_VERBOSE:-5}"

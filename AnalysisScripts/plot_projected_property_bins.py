@@ -24,12 +24,12 @@ import pandas as pd
 
 
 DEFAULT_GRAPH_FEATURE_ARRAYS = Path(
-    "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/"
-    "AnalysisResults/PeriodicBoudaries/2026-08-03/GraphPipeline/graph_feature_arrays.pkl"
+    "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/"
+    "AnalysisResults/periodic_boundaries/2026-08-03/graph_features/graph_feature_arrays.pkl"
 )
 DEFAULT_OUTPUT_DIR = Path(
-    "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/"
-    "AnalysisResults/PeriodicBoudaries/2026-08-03/Tests/visualization"
+    "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/"
+    "AnalysisResults/periodic_boundaries/2026-08-03/tests/visualization"
 )
 DEFAULT_BIN_SIZE = 1.0e-4
 DEFAULT_COLOR_LIMITS = {

@@ -34,7 +34,8 @@ venv.bak/
 .DS_Store
 
 # Results and outputs
-AnalysisResults/
+AnalysisResults/*
+!AnalysisResults/README.md
 *.mat
 *.pkl
 *.pickle

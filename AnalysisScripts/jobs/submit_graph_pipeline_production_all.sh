@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts"
 cd "${SCRIPT_DIR}"
 
 mkdir -p jobs/logs
@@ -75,4 +75,4 @@ FINAL_JOB=$(sbatch --parsable \
 echo "Submitted finalize job: ${FINAL_JOB}"
 
 echo "Final output directory:"
-echo "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphPipeline_0deg_30deg"
+echo "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/graph_features"

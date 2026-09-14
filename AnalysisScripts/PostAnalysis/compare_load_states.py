@@ -12,9 +12,9 @@ import pandas as pd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ANALYSIS_RESULTS_DIR = SCRIPT_DIR.parent.parent / "AnalysisResults"
-DEFAULT_FINAL_DIR = ANALYSIS_RESULTS_DIR / "FinalLoadState" / "FullGraph_2mean_ref_geom"
-DEFAULT_JAMMING_DIR = ANALYSIS_RESULTS_DIR / "JammingState" / "FullGraph_final_load_threshold"
-DEFAULT_OUT_DIR = ANALYSIS_RESULTS_DIR / "LoadStateComparison" / "Final_vs_Jamming_final_threshold"
+DEFAULT_FINAL_DIR = ANALYSIS_RESULTS_DIR / "final_load" / "graph_features"
+DEFAULT_JAMMING_DIR = ANALYSIS_RESULTS_DIR / "jamming" / "graph_features_final_threshold"
+DEFAULT_OUT_DIR = ANALYSIS_RESULTS_DIR / "cross_state" / "final_vs_jamming_final_threshold"
 
 NODE_KEYS = ["geometry", "sim_idx", "node_id"]
 GRAPH_KEYS = ["geometry", "sim_idx"]

@@ -1,60 +1,58 @@
-# Granular Ruby simulation analysis
+# Granular ruby simulation analysis
 
-This repository builds and analyzes particle-contact graphs for ruby granular simulations at jamming, final load, and periodic-boundary conditions. The analysis convention is to retain actual particle nodes and particle-particle contacts. Wall placeholders and wall-contact edges remain in the full graph data where generated, but are excluded from primary property analysis.
+This repository builds particle-contact graphs and analyzes granular ruby simulations. Raw simulation arrays live on permanent storage; generated graphs, tables, figures, and job artifacts live under `AnalysisResults/`.
 
-## Folder guide
+## Data locations
+
+The canonical raw-data root is:
+
+```text
+/nfs/turbo/meche-abucsek/Yuefeng/Granular_Project/Simulation/
+├── BoundaryAngle_Container/
+│   ├── FinalLoad/Degree{0,15,30,45}/
+│   └── Jamming/Degree{0,15,30,45}/
+└── BoundaryAngle_Periodic/
+    ├── 0Degree/
+    └── 30Degree/
+```
+
+The graph-generation defaults read `BoundaryAngle_Periodic` and write under the `2026-08-03` results tag. Override the source with `GRAPHPIPE_BASE_PATH`, the common raw root with `GRANULAR_SIMULATION_ROOT`, or the output tag with `GRANULAR_RESULTS_RUN_TAG`.
+
+### Raw-data inventory
+
+| Dataset | Angles | Simulations per angle | Particles per simulation | Force rows by angle |
+|---|---|---:|---:|---|
+| Container, final load | 0°, 15°, 30°, 45° | 20 | 464 | 61,666; 61,623; 61,936; 61,077 |
+| Container, jamming | 0°, 15°, 30°, 45° | 20 | 464 | 42,622; 43,567; 41,552; 41,320 |
+| Periodic boundary | 0°, 30° | 20 | 1,575 | 161,542; 158,418 |
+
+Each angle has compatible `forces_collect`, `f_lengths`, `Pos_collect`, and `sigma_collect` arrays. No ROI file is present, so the graph builder will assign the ROI flag as zero unless one is supplied. Final-load folders also contain force-displacement arrays and small fit/reference files.
+
+## Repository guide
 
 | Path | Purpose |
 |---|---|
-| `Data/` | Simulation inputs grouped into `JammingState`, `FinalLoadState`, and `PeriodicBoudaries`. |
-| `AnalysisScripts/Pipeline/` | Core graph construction and feature calculations. |
-| `AnalysisScripts/RunWhole/` | Whole-workflow drivers and graph-generation documentation. |
-| `AnalysisScripts/PostAnalysis/` | Comparisons, plotting, and reusable downstream analyses. |
-| `AnalysisScripts/PostAnalysis/PeriodicRubyPipeline/` | Restartable periodic/final-state analysis jobs. |
-| `AnalysisScripts/OldVersions/` | Historical scripts retained for provenance, not the current entry points. |
-| `AnalysisScripts/jobs/` | Scheduler scripts, logs, and temporary job state. |
-| `AnalysisResults/JammingState/` | Jamming-state graph outputs. |
-| `AnalysisResults/FinalLoadState/` | Final-load graphs, geometry comparison, reusable-pipeline results, and the new property/boundary analysis. |
-| `AnalysisResults/PeriodicBoudaries/` | Periodic-boundary graphs and angle comparisons, including the new property/boundary analysis. |
-| `AnalysisResults/LoadStateComparison/` | Cross-state comparison products. |
+| `AnalysisScripts/Pipeline/` | Restartable graph construction and feature calculations. |
+| `AnalysisScripts/RunWhole/` | Monolithic graph-generation workflow and feature reference. |
+| `AnalysisScripts/PostAnalysis/` | Comparisons, plotting, boundary-layer, and local-structure analyses. |
+| `AnalysisScripts/PostAnalysis/PeriodicRubyPipeline/` | Restartable neighborhood, bond-order, high-force, and cluster analyses. |
+| `AnalysisScripts/OldVersions/` | Historical code retained for provenance; not a current entry point. |
+| `AnalysisScripts/jobs/` | SLURM submission scripts; generated logs and temporary state are ignored. |
+| `AnalysisResults/` | Generated outputs. See its README for the canonical layout and status. |
 
-`Boudaries` is retained in existing path names for compatibility.
+## Current entry points
 
-## New property and boundary-layer analysis
+Generate periodic-boundary graph features with the staged pipeline:
 
-The reproducible entry point is [`AnalysisScripts/PostAnalysis/analyze_boundary_layers.py`](AnalysisScripts/PostAnalysis/analyze_boundary_layers.py). It produces:
+```bash
+cd AnalysisScripts
+bash jobs/submit_graph_pipeline_production_all.sh
+```
 
-- enlarged force-cluster node-property maps: force nodes colored by property, force contacts light red, and the remaining network light gray;
-- enlarged force-cluster edge-property maps: force contacts colored by property, force nodes light red, and the remaining network light gray;
-- perspective and x/y/z projection views for every 3-D property map;
-- one common P5/P95 color range across geometry panels for each property;
-- graph-distance groups 0, 1, and rest (>=2 or unreachable);
-- per-property distributions for `0 vs rest`, followed by separate `0`, `1`, and `rest` curves, with descriptive statistics and contrast tests;
-- per-simulation mean and median distributions for groups 0, 1, and rest, compared across boundary angles;
-- force-cluster versus non-force histograms and simulation-level mean/median comparisons under both boundary grouping schemes;
-- compressed node/edge feature tables with exact boundary distance;
-- an audit of boundary assignment for every simulation.
-
-Wall data is used only to seed the boundary definition: a real particle incident to a wall-contact edge is node distance 0. Shortest paths are then calculated only through particle-particle contacts. An analyzed particle contact gets the minimum distance of its two endpoints, so a contact incident to a boundary particle is edge distance 0.
-
-Generated results and detailed inventories are in:
-
-- [`AnalysisResults/PeriodicBoudaries/2026-08-03/GraphPipeline/PropertyBoundaryAnalysis/README.md`](AnalysisResults/PeriodicBoudaries/2026-08-03/GraphPipeline/PropertyBoundaryAnalysis/README.md)
-- [`AnalysisResults/FinalLoadState/FullGraph_2mean_ref_geom/PropertyBoundaryAnalysis/README.md`](AnalysisResults/FinalLoadState/FullGraph_2mean_ref_geom/PropertyBoundaryAnalysis/README.md)
-
-Run both datasets from this repository root:
+Run boundary-layer analysis for all configured datasets:
 
 ```bash
 python AnalysisScripts/PostAnalysis/analyze_boundary_layers.py
 ```
 
-The default color clipping is P5/P95. For P10/P90 instead:
-
-```bash
-python AnalysisScripts/PostAnalysis/analyze_boundary_layers.py \
-  --lower-percentile 10 --upper-percentile 90
-```
-
-## Environment
-
-The new analysis uses Python 3 with NumPy, pandas, SciPy, and Matplotlib. The broader graph-generation pipeline additionally uses NetworkX and GraphRicciCurvature; see `AnalysisScripts/RunWhole/GraphGeneration_README.md` and `AnalysisScripts/PostAnalysis/PeriodicRubyPipeline/README.md` for pipeline-specific details.
+The primary graph view retains actual particle nodes and particle-particle contacts. Wall placeholders and wall-contact edges remain in the full graph where generated, but primary property analysis uses the particle-only core graph unless an output explicitly says `with_walls`.

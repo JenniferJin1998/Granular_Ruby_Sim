@@ -19,8 +19,16 @@ from scipy.sparse.linalg import eigsh
 
 # === Config ===
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-base_path = os.path.join(PROJECT_ROOT, 'Data', 'PeriodicBoudaries')
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+RAW_DATA_ROOT = os.environ.get(
+    'GRANULAR_SIMULATION_ROOT',
+    '/nfs/turbo/meche-abucsek/Yuefeng/Granular_Project/Simulation',
+)
+RESULTS_RUN_TAG = os.environ.get('GRANULAR_RESULTS_RUN_TAG', '2026-08-03')
+base_path = os.environ.get(
+    'GRAPHPIPE_BASE_PATH',
+    os.path.join(RAW_DATA_ROOT, 'BoundaryAngle_Periodic'),
+)
 
 
 def _env_flag(name, default):
@@ -50,7 +58,7 @@ def _env_csv(name):
 
 out_path = os.environ.get(
     'GRAPHGEN_OUT_PATH',
-    os.path.join(PROJECT_ROOT, 'AnalysisResults', 'PeriodicBoudaries', 'GraphGeneration'),
+    os.path.join(PROJECT_ROOT, 'AnalysisResults', 'periodic_boundaries', RESULTS_RUN_TAG, 'graph_generation'),
 )
 GEOMETRY_FILTERS = {item.lower() for item in _env_csv('GRAPHGEN_GEOMETRY_FILTER')}
 MAX_SIMS_PER_GEOMETRY = max(0, _env_int('GRAPHGEN_MAX_SIMS_PER_GEOMETRY', 0))

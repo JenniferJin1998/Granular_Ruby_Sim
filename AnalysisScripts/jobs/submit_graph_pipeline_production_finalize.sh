@@ -7,23 +7,23 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32gb
 #SBATCH --time=04:00:00
-#SBATCH --output=/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts/jobs/logs/gp_prod_finalize_%j.log
+#SBATCH --output=/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts/jobs/logs/gp_prod_finalize_%j.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=yfjin@umich.edu
 
 set -eo pipefail
 
-SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts"
+SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts"
 PIPELINE_DIR="${SCRIPT_DIR}/Pipeline"
 TMP_DIR="${SCRIPT_DIR}/jobs/tmp"
-PIPE_OUT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisResults/PeriodicBoudaries/GraphPipeline_0deg_30deg"
+PIPE_OUT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/graph_features"
 
 export PS1="${PS1:-}"
 source /home/yfjin/Research/anaconda3/etc/profile.d/conda.sh
 conda activate graph_analysis
 set -u
 
-export GRAPHPIPE_PROJECT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim"
+export GRAPHPIPE_PROJECT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608"
 export GRAPHPIPE_OUT_PATH="${PIPE_OUT}"
 export GRAPHGEN_GEOMETRY_FILTER="0deg,30deg"
 export GRAPHGEN_MAX_SIMS_PER_GEOMETRY=0

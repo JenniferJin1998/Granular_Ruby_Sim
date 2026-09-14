@@ -27,7 +27,9 @@ def load_config(path=CONFIG_PATH):
     # JSON is a strict subset of YAML, avoiding a PyYAML dependency on compute nodes.
     raw = Path(path).read_text()
     cfg = json.loads(raw)
-    root = Path(cfg["project_root"])
+    configured_root = cfg.get("project_root")
+    root = Path(configured_root).expanduser() if configured_root else HERE.parents[2]
+    cfg["project_root"] = root
     for key in ("graph_pickle", "existing_results", "output_root"):
         value = Path(cfg[key])
         cfg[key] = value if value.is_absolute() else root / value

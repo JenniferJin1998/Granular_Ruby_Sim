@@ -7,19 +7,19 @@ This restartable pipeline analyzes the saved 0° and 30° graphs without rebuild
 ```bash
 source /home/yfjin/Research/anaconda3/etc/profile.d/conda.sh
 conda activate graph_analysis
-cd /scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim/AnalysisScripts/PostAnalysis/PeriodicRubyPipeline
+cd /scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts/PostAnalysis/PeriodicRubyPipeline
 ```
 
 `config.yaml` uses JSON syntax, which is valid YAML, so compute jobs do not require PyYAML. Change paths, workers, thresholds, or SLURM resources there before submission.
 
-The same code supports the four FinalLoadState geometries. Its separate configuration uses `0deg`, `15deg`, `30deg`, and `45deg`, with 20 simulations per geometry, and writes into `AnalysisResults/FinalLoadState/ReusablePipeline`. It also submits the full node/edge/graph feature-distribution analysis into `AnalysisResults/FinalLoadState/GeometryComparison`; all six geometry pairs are tested.
+The same code supports the four final-load geometries. Its separate configuration uses `0deg`, `15deg`, `30deg`, and `45deg`, with 20 simulations per geometry, and writes into `AnalysisResults/final_load/local_structure`. It also submits the full node/edge/graph feature-distribution analysis into `AnalysisResults/final_load/angle_comparison`; all six geometry pairs are tested.
 
 ```bash
 ./submit_final_load_state.sh --dry-run
 ./submit_final_load_state.sh --submit
 ```
 
-The FinalLoadState source pickle and existing feature CSV files are read only. Job 0 currently identifies no periodic axes for these explicitly wall-bounded samples. Primary Jobs 1–6 use the particle-only `core` graph and exclude `_with_walls` properties; the separate feature-distribution stage intentionally mirrors the earlier feature-table analysis and therefore includes full-table edge rows, including wall contacts tagged by `is_wall_contact`.
+The final-load source pickle and existing feature CSV files are read only. Job 0 currently identifies no periodic axes for these explicitly wall-bounded samples. Primary Jobs 1–6 use the particle-only `core` graph and exclude `_with_walls` properties; the separate feature-distribution stage intentionally mirrors the earlier feature-table analysis and therefore includes full-table edge rows, including wall contacts tagged by `is_wall_contact`.
 
 Local betweenness uses a deterministic approximation with at most 32 source nodes (configured by `job2_betweenness_approx_k`). Exact edge connectivity is attempted only through the configured 250-node neighborhood limit; larger neighborhoods are retained with `edge_connectivity=NaN` and `connectivity_exact_computed=false`. These choices prevent a few overlapping large neighborhoods from dominating the complete array while making every omission explicit.
 
@@ -27,7 +27,7 @@ Local betweenness uses a deterministic approximation with at most 32 source node
 
 - `job0_verify_graphs.py`: read-only graph/property inventory and estimated periodic geometry.
 - `job1_global_figures.py`: simulation-replicate topology evidence.
-- `job2_subgraph_analysis.py`: restartable `bundle × simulation × hop` tasks (800 for the periodic dataset; 1,600 for FinalLoadState). Submission uses five resource-matched arrays: fast (1 CPU), paths (4), fundamental cycles (8), sparse spectral (8), and connectivity (4). Local loop fractions use a fundamental cycle basis because repeating minimum-cycle-basis optimization for every overlapping 5-hop neighborhood is computationally prohibitive.
+- `job2_subgraph_analysis.py`: restartable `bundle × simulation × hop` tasks (800 for the periodic dataset; 1,600 for final load). Submission uses five resource-matched arrays: fast (1 CPU), paths (4), fundamental cycles (8), sparse spectral (8), and connectivity (4). Local loop fractions use a fundamental cycle basis because repeating minimum-cycle-basis optimization for every overlapping 5-hop neighborhood is computationally prohibitive.
 - `job3_crystal_baselines.py`: 16 `crystal × hop` tasks.
 - `job4_bond_order.py`: one task per simulation plus 4 ideal-crystal tasks.
 - `job5_high_force_comparison.py`: one complete-graph task and four centered-neighborhood tasks per simulation. Stored `is_force_chain_node` and `is_high_force` labels are reused. Centered tasks reuse Job 2 topology rows and aggregate all eligible scalar node/edge properties in the identical induced neighborhoods.

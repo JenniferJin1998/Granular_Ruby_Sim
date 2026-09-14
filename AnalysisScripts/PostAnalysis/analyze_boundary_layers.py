@@ -32,8 +32,8 @@ from scipy import stats
 
 PROJECT = Path(__file__).resolve().parents[2]
 DATASETS = {
-    "PeriodicBoudaries_2026-08-03": PROJECT / "AnalysisResults" / "PeriodicBoudaries" / "2026-08-03" / "GraphPipeline",
-    "FinalLoadState": PROJECT / "AnalysisResults" / "FinalLoadState" / "FullGraph_2mean_ref_geom",
+    "periodic_boundaries_2026-08-03": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "graph_features",
+    "final_load": PROJECT / "AnalysisResults" / "final_load" / "graph_features",
 }
 NODE_EXCLUDE = {"geometry", "sim_idx", "node_id", "x", "y", "z", "is_wall", "in_center_region", "principal_eigenvector", "force_chain_role"}
 EDGE_EXCLUDE = {"geometry", "sim_idx", "node1", "node2", "contact_x", "contact_y", "contact_z", "n_x", "n_y", "n_z", "t_x", "t_y", "t_z", "is_core_edge", "is_wall_contact"}
@@ -665,13 +665,13 @@ From the repository root:
 python AnalysisScripts/PostAnalysis/analyze_boundary_layers.py
 ```
 
-Use `--datasets FinalLoadState` (or the periodic dataset key) to run one target. Use `--lower-percentile 10 --upper-percentile 90` for P10/P90 color clipping.
+Use `--datasets final_load` (or the periodic dataset key) to run one target. Use `--lower-percentile 10 --upper-percentile 90` for P10/P90 color clipping.
 """
     (output / "README.md").write_text(text)
 
 
 def analyze(name: str, source: Path, lower: float, upper: float, skip_3d: bool = False) -> None:
-    output = source / "PropertyBoundaryAnalysis"
+    output = source.parent / "boundary_layers"
     output.mkdir(parents=True, exist_ok=True)
     for obsolete in ("node_geometry_tests_by_shell.csv", "edge_geometry_tests_by_shell.csv"):
         (output / obsolete).unlink(missing_ok=True)
@@ -686,7 +686,7 @@ def analyze(name: str, source: Path, lower: float, upper: float, skip_3d: bool =
     edge_limits = color_limits(edges, edge_props, lower, upper)
     representative = representative_simulations(nodes)
     box_lengths, periodic_axes = {}, []
-    geometry_path = source.parent / "ReusablePipeline" / "job0_metadata" / "geometry_estimate.json"
+    geometry_path = source.parent / "local_structure" / "job0_metadata" / "geometry_estimate.json"
     if geometry_path.exists():
         geometry = json.loads(geometry_path.read_text())
         box_lengths = {int(axis): float(length) for axis, length in geometry.get("box_lengths", {}).items()}

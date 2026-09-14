@@ -14,15 +14,16 @@ mkdir -p "${MPLCONFIGDIR}"
 
 readarray -t SETTINGS < <(python - "${CONFIG}" <<'PY'
 import json,sys
+from pathlib import Path
 c=json.load(open(sys.argv[1])); s=c['slurm']
-print(c['output_root'] if c['output_root'].startswith('/') else c['project_root']+'/'+c['output_root'])
+root=c.get('project_root') or str(Path(sys.argv[1]).resolve().parents[3])
+print(c['output_root'] if c['output_root'].startswith('/') else root+'/'+c['output_root'])
 print(s['account']);print(s['partition']);print(s['job2_cpus']);print(s['job2_memory']);print(s['job2_time']);print(s['job2_array_concurrency'])
 print(s['job3_cpus']);print(s['job3_memory']);print(s['job3_time']);print(s['job4_cpus']);print(s['job4_memory']);print(s['job4_time']);print(s['job4_array_concurrency'])
 print(len(c['angles'])*c['simulations_per_angle']*len(c['hop_sizes'])*len(c['job2_property_bundles']))
 print(s['job5_cpus']);print(s['job5_memory']);print(s['job5_time']);print(c['job5_array_concurrency'])
 print(s['job6_cpus']);print(s['job6_memory']);print(s['job6_time']);print(c['job6_array_concurrency'])
 nsim=len(c['angles'])*c['simulations_per_angle'];print(nsim);print(nsim*(1+len(c['hop_sizes'])))
-root=c['project_root']
 for key in ('feature_comparison_input','feature_comparison_output'):
  p=c.get(key,'');print(p if p.startswith('/') else root+'/'+p if p else '')
 print(' '.join(c['angles']))

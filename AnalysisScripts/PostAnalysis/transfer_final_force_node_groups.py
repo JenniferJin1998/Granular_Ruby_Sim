@@ -11,9 +11,9 @@ import pandas as pd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ANALYSIS_RESULTS_DIR = SCRIPT_DIR.parent.parent / "AnalysisResults"
-DEFAULT_FINAL_DIR = ANALYSIS_RESULTS_DIR / "FinalLoadState" / "FullGraph_2mean_ref_geom"
-DEFAULT_JAMMING_DIR = ANALYSIS_RESULTS_DIR / "JammingState" / "FullGraph_final_load_threshold"
-DEFAULT_OUT_DIR = ANALYSIS_RESULTS_DIR / "JammingState" / "FinalForceNodeGroups"
+DEFAULT_FINAL_DIR = ANALYSIS_RESULTS_DIR / "final_load" / "graph_features"
+DEFAULT_JAMMING_DIR = ANALYSIS_RESULTS_DIR / "jamming" / "graph_features_final_threshold"
+DEFAULT_OUT_DIR = ANALYSIS_RESULTS_DIR / "jamming" / "final_force_node_groups"
 
 NODE_KEYS = ["geometry", "sim_idx", "node_id"]
 EXCLUDE_NUMERIC = {"sim_idx", "node_id"}
