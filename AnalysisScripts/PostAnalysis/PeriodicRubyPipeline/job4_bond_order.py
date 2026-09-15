@@ -92,18 +92,34 @@ def validate_crystals(cfg,root):
     if not passed: raise RuntimeError("Bond-order rotational/translation validation failed")
     return frame
 
+def run_task(kind,label,sim,cfg,root,graphs=None,task_number=None):
+    stem=f"ruby_{label}_sim{sim:03d}" if kind=="ruby" else f"crystal_{label}"
+    out=root/"job4_bond_order"/f"{stem}_nodes.csv"
+    log=setup_logging(cfg,"job4",task_number)
+    if output_valid(out,cfg,("node_id","q4","q6")):
+        log.info("Skipping %s",out); return
+    if kind=="ruby":
+        if graphs is None: graphs=load_graph_dict(cfg)
+        G=graphs[label]["core"][sim]; geo=geometry(cfg); lengths=[geo["box_lengths"][str(i)] for i in range(3)]; cell=np.diag(lengths); periodic=tuple(geo["periodic_axes"])
+    else:
+        G=crystal_graph(label,cfg["particle_diameter"],cfg["contact_distance_tolerance_fraction"]); cell=np.asarray(G.graph["cell_matrix"]); periodic=tuple(G.graph["periodic_axes"])
+    nodes,edges,global_=bond_order(G,cfg,cell,periodic); nodes.insert(0,"system",stem); edges.insert(0,"system",stem); atomic_csv(out,nodes); atomic_csv(out.with_name(out.name.replace("_nodes","_edges")),edges); atomic_json(out.with_name(out.name.replace("_nodes.csv","_system.json")),global_); mark_complete(out,cfg,{"kind":kind,"label":label,"sim":sim,"particles":len(nodes)}); log.info("Complete %s",out)
+
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument("--config",default=CONFIG_PATH); ap.add_argument("--task-id",type=int); ap.add_argument("--validate",action="store_true"); ap.add_argument("--dry-run",action="store_true"); args=ap.parse_args(); cfg=load_config(args.config); root=ensure_layout(cfg)
+    ap=argparse.ArgumentParser(); ap.add_argument("--config",default=CONFIG_PATH); ap.add_argument("--task-id",type=int); ap.add_argument("--all",action="store_true",help="Run all ruby and crystal tasks while loading the graph pickle only once"); ap.add_argument("--validate",action="store_true"); ap.add_argument("--dry-run",action="store_true"); args=ap.parse_args(); cfg=load_config(args.config); root=ensure_layout(cfg)
     if args.validate:
         if args.dry_run: print("Would validate SC/BCC/FCC/HCP rotation and periodic translation invariance"); return
         validate_crystals(cfg,root); return
-    tasks=task_list(cfg); tid=task_id(args.task_id)
+    tasks=task_list(cfg)
+    if args.all:
+        if args.dry_run:
+            print(f"Would run {len(tasks)} bond-order tasks"); return
+        graphs=load_graph_dict(cfg)
+        for tid,(kind,label,sim) in enumerate(tasks): run_task(kind,label,sim,cfg,root,graphs=graphs,task_number=tid)
+        return
+    tid=task_id(args.task_id)
     if tid is None: raise SystemExit("Provide --task-id or SLURM_ARRAY_TASK_ID")
-    kind,label,sim=tasks[tid]; stem=f"ruby_{label}_sim{sim:03d}" if kind=="ruby" else f"crystal_{label}"; out=root/"job4_bond_order"/f"{stem}_nodes.csv"; log=setup_logging(cfg,"job4",tid)
-    if output_valid(out,cfg,("node_id","q4","q6")): log.info("Skipping %s",out); return
-    if args.dry_run: print(tid,kind,label,sim,out); return
-    if kind=="ruby":
-        graphs=load_graph_dict(cfg); G=graphs[label]["core"][sim]; geo=geometry(cfg); lengths=[geo["box_lengths"][str(i)] for i in range(3)]; cell=np.diag(lengths); periodic=tuple(geo["periodic_axes"])
-    else: G=crystal_graph(label,cfg["particle_diameter"],cfg["contact_distance_tolerance_fraction"]); cell=np.asarray(G.graph["cell_matrix"]); periodic=tuple(G.graph["periodic_axes"])
-    nodes,edges,global_=bond_order(G,cfg,cell,periodic); nodes.insert(0,"system",stem); edges.insert(0,"system",stem); atomic_csv(out,nodes); atomic_csv(out.with_name(out.name.replace("_nodes","_edges")),edges); atomic_json(out.with_name(out.name.replace("_nodes.csv","_system.json")),global_); mark_complete(out,cfg,{"kind":kind,"label":label,"sim":sim,"particles":len(nodes)}); log.info("Complete %s",out)
+    kind,label,sim=tasks[tid]
+    if args.dry_run: print(tid,kind,label,sim); return
+    run_task(kind,label,sim,cfg,root,task_number=tid)
 if __name__=="__main__":main()

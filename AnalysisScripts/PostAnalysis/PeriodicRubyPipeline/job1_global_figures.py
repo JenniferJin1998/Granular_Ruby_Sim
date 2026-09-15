@@ -57,11 +57,12 @@ def main():
     plt.close(fig)
     dist=pd.DataFrame(distributions); loops_df=pd.DataFrame(loop_rows)
     fig,axes=plt.subplots(2,2,figsize=(11,8))
+    distribution_edges={prop:shared_histogram_edges([dist[(dist.angle==angle)&(dist.property==prop)].value for angle in cfg["angles"]],bins=40) for prop in ("degree","local_clustering")}
     for angle in cfg["angles"]:
         color=colors[angle]
         subset=loops_df[loops_df.angle==angle].groupby("loop_size").fraction.mean(); axes[0,0].plot(subset.index,subset.values,"o-",label=angle,color=color)
         for ax,prop in ((axes[0,1],"degree"),(axes[1,0],"local_clustering")):
-            vals=dist[(dist.angle==angle)&(dist.property==prop)].value; ax.hist(vals,bins=40,density=True,histtype="step",label=angle,color=color)
+            vals=dist[(dist.angle==angle)&(dist.property==prop)].value; ax.hist(vals,bins=distribution_edges[prop],density=True,histtype="step",label=angle,color=color)
     axes[0,0].set(title="Normalized loop-size distribution",xlabel="Loop size",ylabel="Mean fraction"); axes[0,1].set(title="Node-degree distribution",xlabel="Degree",ylabel="Density"); axes[1,0].set(title="Local-clustering distribution",xlabel="Clustering",ylabel="Density")
     for angle in cfg["angles"]:
         color=colors[angle]

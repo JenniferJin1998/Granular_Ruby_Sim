@@ -29,8 +29,8 @@ from scipy.spatial import distance as spatial_distance
 
 DATE_TAG = "2026-08-03"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_INPUT = PROJECT_ROOT / "AnalysisResults" / "periodic_boundaries" / DATE_TAG / "graph_features"
-DEFAULT_OUTPUT = PROJECT_ROOT / "AnalysisResults" / "periodic_boundaries" / DATE_TAG / "angle_comparison"
+DEFAULT_INPUT = PROJECT_ROOT / "AnalysisResults" / "periodic_boundaries" / DATE_TAG / "0_graph_and_basic_stats" / "graph_data"
+DEFAULT_OUTPUT = PROJECT_ROOT / "AnalysisResults" / "periodic_boundaries" / DATE_TAG / "1_network_property_comparison" / "feature_properties"
 ANGLES = ("0deg", "30deg")
 
 ID_COLUMNS = {
@@ -251,6 +251,8 @@ def summarize_entity(
     thresholds: dict[str, float],
     default_threshold: float | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if not properties:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     simulation_rows = []
     pooled_rows = []
     aggregate_rows = []
@@ -369,8 +371,8 @@ def common_edges(a: np.ndarray, b: np.ndarray, bins: int = 80) -> np.ndarray | N
 
 
 def plot_distributions(df: pd.DataFrame, level: str, properties: list[str], out_dir: Path) -> None:
-    pooled_dir = out_dir / "pooled_distributions" / level
-    individual_dir = out_dir / "individual_simulation_distributions" / level
+    pooled_dir = out_dir / "distributions" / "pooled" / level
+    individual_dir = out_dir / "distributions" / "individual_simulations" / level
     pooled_dir.mkdir(parents=True, exist_ok=True)
     individual_dir.mkdir(parents=True, exist_ok=True)
     for prop in properties:
@@ -407,7 +409,7 @@ def plot_distributions(df: pd.DataFrame, level: str, properties: list[str], out_
 
 
 def plot_simulation_statistics(sim_stats: pd.DataFrame, level: str, properties: list[str], out_dir: Path) -> None:
-    target = out_dir / "simulation_level_statistics" / level
+    target = out_dir / "simulation_mean_boxplots" / level
     target.mkdir(parents=True, exist_ok=True)
     for prop in properties:
         data = sim_stats[sim_stats.property == prop]
@@ -425,7 +427,7 @@ def plot_simulation_statistics(sim_stats: pd.DataFrame, level: str, properties: 
 
 
 def plot_distances(distances: pd.DataFrame, out_dir: Path) -> None:
-    target = out_dir / "distribution_distances"
+    target = out_dir / "distributions" / "distance_comparisons"
     target.mkdir(parents=True, exist_ok=True)
     metrics = ["wasserstein_distance", "kolmogorov_smirnov_statistic", "jensen_shannon_distance", "energy_distance"]
     for (level,geometry_a,geometry_b), group in distances.groupby(["entity","geometry_a","geometry_b"]):
@@ -444,7 +446,7 @@ def plot_distances(distances: pd.DataFrame, out_dir: Path) -> None:
 
 
 def plot_graph_properties(values: pd.DataFrame, properties: list[str], out_dir: Path) -> None:
-    target = out_dir / "graph_level_properties"
+    target = out_dir / "simulation_mean_boxplots" / "graph_properties"
     target.mkdir(parents=True, exist_ok=True)
     for prop in properties:
         arrays = [finite_values(values.loc[values.geometry == angle, prop]) for angle in ANGLES]
@@ -489,11 +491,16 @@ def main() -> None:
     parser.add_argument("--include-coordinates", action="store_true")
     parser.add_argument("--skip-plots", action="store_true")
     parser.add_argument("--geometries", nargs="+", help="Geometry labels to compare; defaults to 0deg 30deg")
+    parser.add_argument("--properties", nargs="+", help="Analyze only these exact property names")
     args = parser.parse_args()
     if args.geometries: ANGLES=tuple(args.geometries)
     cmap=plt.get_cmap("tab10" if len(ANGLES)<=10 else "tab20");COLORS={angle:cmap(i%cmap.N) for i,angle in enumerate(ANGLES)}
     thresholds, default_threshold = parse_thresholds(args.threshold)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    table_dir = args.output_dir / "tables"
+    metadata_dir = args.output_dir / "metadata"
+    table_dir.mkdir(parents=True, exist_ok=True)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
 
     tables = {}
     properties = {}
@@ -506,6 +513,8 @@ def main() -> None:
         if missing_angles:
             raise ValueError(f"{path} is missing angles: {sorted(missing_angles)}")
         properties[level] = numeric_properties(tables[level], level, args.include_coordinates)
+        if args.properties:
+            properties[level] = [name for name in properties[level] if name in args.properties]
         print(f"{level}: {len(properties[level])} numeric properties")
 
     all_sim, all_pooled, all_aggregate, all_distances = [], [], [], []
@@ -525,15 +534,15 @@ def main() -> None:
     tests = replicate_tests(simulation_stats)
     graph_values, graph_summary, graph_tests = direct_graph_analysis(tables["graph"], properties["graph"])
 
-    simulation_stats.to_csv(args.output_dir / "simulation_distribution_statistics.csv", index=False)
-    pooled_stats.to_csv(args.output_dir / "pooled_distribution_statistics.csv", index=False)
-    aggregate_stats.to_csv(args.output_dir / "simulation_statistic_angle_summary.csv", index=False)
-    distances.to_csv(args.output_dir / "pooled_distribution_distances.csv", index=False)
-    tests.to_csv(args.output_dir / "simulation_replicate_tests.csv", index=False)
-    graph_values.to_csv(args.output_dir / "graph_property_values_by_simulation.csv", index=False)
-    graph_summary.to_csv(args.output_dir / "graph_property_angle_summary.csv", index=False)
-    graph_tests.to_csv(args.output_dir / "graph_property_tests.csv", index=False)
-    write_method_notes(args.output_dir / "analysis_metadata.json", properties, thresholds, default_threshold)
+    simulation_stats.to_csv(table_dir / "simulation_distribution_statistics.csv", index=False)
+    pooled_stats.to_csv(table_dir / "pooled_distribution_statistics.csv", index=False)
+    aggregate_stats.to_csv(table_dir / "simulation_statistic_angle_summary.csv", index=False)
+    distances.to_csv(table_dir / "pooled_distribution_distances.csv", index=False)
+    tests.to_csv(table_dir / "simulation_replicate_tests.csv", index=False)
+    graph_values.to_csv(table_dir / "graph_property_values_by_simulation.csv", index=False)
+    graph_summary.to_csv(table_dir / "graph_property_angle_summary.csv", index=False)
+    graph_tests.to_csv(table_dir / "graph_property_tests.csv", index=False)
+    write_method_notes(metadata_dir / "analysis_metadata.json", properties, thresholds, default_threshold)
 
     if not args.skip_plots:
         for level, sim in zip(("node", "edge"), all_sim):

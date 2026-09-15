@@ -40,6 +40,35 @@ Each angle has compatible `forces_collect`, `f_lengths`, `Pos_collect`, and `sig
 | `AnalysisScripts/jobs/` | SLURM submission scripts; generated logs and temporary state are ignored. |
 | `AnalysisResults/` | Generated outputs. See its README for the canonical layout and status. |
 
+## Current analysis conventions
+
+The periodic graph uses the exact minimum-image geometry with x/y periodicity,
+`Lx = 0.0018 m`, `Ly = 0.0030 m`, and no z wrapping. Contact angles, bond-order
+vectors, and force-cluster shape/orientation calculations all use these
+periodic displacements. Historical results made with inferred box lengths are
+retained only as archived provenance.
+
+Periodic and final-load force-dependent results have two versions:
+
+| Version | Fixed threshold definition |
+|---|---|
+| `force_split1` | Twice the pooled 0° mean normal force over particle-particle and wall contacts. |
+| `force_split2` | Twice the pooled 0° mean normal force over particle-particle contacts only. |
+
+The split-2 thresholds are `1.897454511106544e-05` for periodic simulations
+and `0.3764788410084238` for final load. Each threshold is fixed from 0° and
+then applied to every geometry and the full contact list. Connected force
+clusters always contain particle-particle edges only. Jamming intentionally
+uses the final-load split-1 threshold (`0.4200944651809045`); no jamming
+contact exceeds it, so connected force-cluster plots are omitted.
+
+Boundary-layer analyses use graph distance from directly wall-contacting
+particles. Periodic results provide combined top/bottom, top-only, and
+bottom-only references. Final-load and jamming results additionally retain the
+original top/bottom/side-wall reference. Each reference includes signed
+geometry-minus-0 comparisons (`15°-0°`, `30°-0°`, and `45°-0°` where those
+geometries exist).
+
 ## Current entry points
 
 Generate periodic-boundary graph features with the staged pipeline:
@@ -53,6 +82,15 @@ Run boundary-layer analysis for all configured datasets:
 
 ```bash
 python AnalysisScripts/PostAnalysis/analyze_boundary_layers.py
+```
+
+Create a particle-particle-reference force split without modifying the source
+graph:
+
+```bash
+python AnalysisScripts/PostAnalysis/relabel_particle_contact_threshold.py \
+  --input-dir <canonical_graph_directory> \
+  --output-dir <force_split2_graph_directory>
 ```
 
 The primary graph view retains actual particle nodes and particle-particle contacts. Wall placeholders and wall-contact edges remain in the full graph where generated, but primary property analysis uses the particle-only core graph unless an output explicitly says `with_walls`.

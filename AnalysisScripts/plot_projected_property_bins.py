@@ -25,11 +25,11 @@ import pandas as pd
 
 DEFAULT_GRAPH_FEATURE_ARRAYS = Path(
     "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/"
-    "AnalysisResults/periodic_boundaries/2026-08-03/graph_features/graph_feature_arrays.pkl"
+    "AnalysisResults/periodic_boundaries/2026-08-03/0_graph_and_basic_stats/graph_data/graph_feature_arrays.pkl"
 )
 DEFAULT_OUTPUT_DIR = Path(
     "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/"
-    "AnalysisResults/periodic_boundaries/2026-08-03/tests/visualization"
+    "AnalysisResults/periodic_boundaries/2026-08-03/0_graph_and_basic_stats/artifacts/tests/visualization"
 )
 DEFAULT_BIN_SIZE = 1.0e-4
 DEFAULT_COLOR_LIMITS = {

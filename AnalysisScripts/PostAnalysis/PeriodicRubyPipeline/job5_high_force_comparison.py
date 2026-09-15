@@ -7,6 +7,7 @@ import pandas as pd
 from pipeline_common import *
 
 ID_COLUMNS={"angle","sim_idx","load_step","hop","center_node","center_group","node_id","edge_u","edge_v","group"}
+EDGE_AUDIT_PROPERTIES={"angle_with_zz_original","angle_with_zz_periodic","periodic_dx","periodic_dy","periodic_dz","periodic_distance","periodic_shift_x","periodic_shift_y","crosses_periodic_x","crosses_periodic_y","is_periodic_crossing"}
 
 
 def tasks(graphs,cfg):
@@ -37,7 +38,7 @@ def complete_task(G,cfg,angle,sim,out):
     incident={n for edge,flag in edge_labels.items() if flag for n in edge}; stored_high={n for n,flag in node_labels.items() if flag}; label_extra=len(stored_high-incident); label_missing=len(incident-stored_high)
     node_records=[d for _,d in G.nodes(data=True)]; edge_records=[d for *_,d in G.edges(data=True)]
     node_props=scalar_numeric_properties(node_records,cfg,excluded={cfg["high_force_node_label"],"is_wall"})
-    edge_props=scalar_numeric_properties(edge_records,cfg,excluded={cfg["high_force_edge_label"],"is_wall_contact"})
+    edge_props=scalar_numeric_properties(edge_records,cfg,excluded={cfg["high_force_edge_label"],"is_wall_contact",*EDGE_AUDIT_PROPERTIES})
     nodes=[]
     for n,d in G.nodes(data=True):
         row={"angle":angle,"sim_idx":sim,"load_step":cfg["load_step"],"node_id":n,"group":"high_force" if node_labels[n] else "non_high_force"}
@@ -71,7 +72,7 @@ def job2_metrics(root,angle,sim,hop,cfg):
 def centered_task(G,cfg,root,angle,sim,hop,out):
     node_labels,_,label_source=high_force_labels(G,cfg)
     node_props=scalar_numeric_properties([d for _,d in G.nodes(data=True)],cfg,excluded={cfg["high_force_node_label"],"is_wall"})
-    edge_props=scalar_numeric_properties([d for *_,d in G.edges(data=True)],cfg,excluded={cfg["high_force_edge_label"],"is_wall_contact"})
+    edge_props=scalar_numeric_properties([d for *_,d in G.edges(data=True)],cfg,excluded={cfg["high_force_edge_label"],"is_wall_contact",*EDGE_AUDIT_PROPERTIES})
     topology=job2_metrics(root,angle,sim,hop,cfg); percentiles=[int(x) for x in cfg["job5_selected_percentiles"]]; rows=[]
     for center in G.nodes():
         members=nx.single_source_shortest_path_length(G,center,cutoff=hop).keys(); H=G.subgraph(members); cd=G.nodes[center]
@@ -89,18 +90,29 @@ def centered_task(G,cfg,root,angle,sim,hop,out):
     mark_complete(out,cfg,{"mode":"centered","angle":angle,"sim_idx":sim,"hop":hop,"centers":len(raw),"node_label_source":label_source})
 
 
-def main():
-    ap=argparse.ArgumentParser(); ap.add_argument("--config",default=CONFIG_PATH); ap.add_argument("--task-id",type=int); ap.add_argument("--dry-run",action="store_true"); args=ap.parse_args()
-    cfg=load_config(args.config); root=ensure_layout(cfg); graphs=load_graph_dict(cfg); all_tasks=tasks(graphs,cfg); tid=task_id(args.task_id)
-    if tid is None: raise SystemExit("Provide --task-id or SLURM_ARRAY_TASK_ID")
-    if tid<0 or tid>=len(all_tasks): raise SystemExit(f"task id must be 0..{len(all_tasks)-1}")
-    mode,angle,sim,hop=all_tasks[tid]; stem=f"{angle}_sim{sim:03d}_{mode}"+(f"_hop{hop}" if hop else ""); out=root/"job5_high_force_comparison"/f"{stem}_summary.csv"; log=setup_logging(cfg,"job5",tid)
+def run_task(tid,task,cfg,root,graphs):
+    mode,angle,sim,hop=task; stem=f"{angle}_sim{sim:03d}_{mode}"+(f"_hop{hop}" if hop else ""); out=root/"job5_high_force_comparison"/f"{stem}_summary.csv"; log=setup_logging(cfg,"job5",tid)
     if output_valid(out,cfg,("angle","sim_idx","scope","property","group") if mode=="complete" else ("angle","sim_idx","hop","property","group")): log.info("Skipping valid %s",out); return
-    if args.dry_run: print(tid,mode,angle,sim,hop,out); return
     G=graphs[angle][cfg["primary_graph_view"]][sim]
     if mode=="complete": complete_task(G,cfg,angle,sim,out)
     else: centered_task(G,cfg,root,angle,sim,hop,out)
     log.info("Complete %s",out)
+
+
+def main():
+    ap=argparse.ArgumentParser(); ap.add_argument("--config",default=CONFIG_PATH); ap.add_argument("--task-id",type=int); ap.add_argument("--all-complete",action="store_true",help="Run all complete-graph comparisons while loading the graph pickle once"); ap.add_argument("--dry-run",action="store_true"); args=ap.parse_args()
+    cfg=load_config(args.config); root=ensure_layout(cfg); graphs=load_graph_dict(cfg); all_tasks=tasks(graphs,cfg)
+    if args.all_complete:
+        selected=[(tid,task) for tid,task in enumerate(all_tasks) if task[0]=="complete"]
+        if args.dry_run: print(f"Would run {len(selected)} complete-graph high/non-high comparisons"); return
+        for tid,task in selected: run_task(tid,task,cfg,root,graphs)
+        return
+    tid=task_id(args.task_id)
+    if tid is None: raise SystemExit("Provide --task-id or SLURM_ARRAY_TASK_ID")
+    if tid<0 or tid>=len(all_tasks): raise SystemExit(f"task id must be 0..{len(all_tasks)-1}")
+    mode,angle,sim,hop=all_tasks[tid]; stem=f"{angle}_sim{sim:03d}_{mode}"+(f"_hop{hop}" if hop else ""); out=root/"job5_high_force_comparison"/f"{stem}_summary.csv"
+    if args.dry_run: print(tid,mode,angle,sim,hop,out); return
+    run_task(tid,all_tasks[tid],cfg,root,graphs)
 
 
 if __name__=="__main__": main()

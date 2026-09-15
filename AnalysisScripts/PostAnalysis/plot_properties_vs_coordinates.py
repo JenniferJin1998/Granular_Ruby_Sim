@@ -15,8 +15,8 @@ import pandas as pd
 from scipy import stats
 
 ROOT=Path(__file__).resolve().parents[2]
-DEFAULT_INPUT=ROOT/"AnalysisResults"/"periodic_boundaries"/"2026-08-03"/"graph_features"
-DEFAULT_OUTPUT=ROOT/"AnalysisResults"/"periodic_boundaries"/"2026-08-03"/"angle_comparison"/"property_vs_coordinates"
+DEFAULT_INPUT=ROOT/"AnalysisResults"/"periodic_boundaries"/"2026-08-03"/"0_graph_and_basic_stats"/"graph_data"
+DEFAULT_OUTPUT=ROOT/"AnalysisResults"/"periodic_boundaries"/"2026-08-03"/"1_network_property_comparison"/"feature_properties"/"relationship_plots"/"property_vs_coordinates"
 ANGLES=("0deg","30deg");COLORS={"0deg":"#2474B5","30deg":"#D95F02"}
 
 def safe(s):return re.sub(r"[^A-Za-z0-9_.-]+","_",str(s))

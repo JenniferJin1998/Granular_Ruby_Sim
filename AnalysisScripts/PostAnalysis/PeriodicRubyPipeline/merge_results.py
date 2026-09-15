@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Merge completed task outputs and run simulation-replicate comparisons."""
 import argparse, json
+import os
 import re
 from pathlib import Path
 import numpy as np
@@ -15,6 +16,60 @@ from pipeline_common import *
 
 JOB2_NAME_RE=re.compile(r"^(.+)_sim\d{3}_hop\d+_(fast|paths|loops|spectral|connectivity)(?:_summary)?\.csv$")
 ID_COLUMNS={"angle","sim_idx","load_step","hop","center_node","center_group","node_id","edge_u","edge_v","group"}
+
+def _relative_link(source,destination):
+    """Expose one artifact in the categorized result tree without copying it."""
+    source=Path(source);destination=Path(destination)
+    if not source.exists():return
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    target=os.path.relpath(source,destination.parent)
+    if destination.is_symlink():
+        if os.readlink(destination)==target:return
+        destination.unlink()
+    elif destination.exists():return
+    destination.symlink_to(target,target_is_directory=source.is_dir())
+
+def refresh_categorized_views(root, network=None, force=None):
+    """Sort presentation links into distributions, sample means, and examples."""
+    root=Path(root)
+    dataset=None
+    if network is None or force is None:
+        if root.parent.name!="artifacts" or root.parent.parent.name!="1_network_property_comparison":return
+        network=root.parent.parent;dataset=network.parent;force=dataset/"2_force_cluster_comparison"
+    network=Path(network);force=Path(force);combined=root/"combined_results"
+    if dataset is not None:
+        basic=dataset/"0_graph_and_basic_stats"/"basic_statistics"
+        _relative_link(root/"job0_metadata",basic/"tables_and_validation")
+        _relative_link(root/"job1_global_figures",basic/"network_summary_figures")
+    bond=network/"bond_order"
+    _relative_link(root/"job4_bond_order",bond/"artifacts")
+    _relative_link(root/"job3_crystal_baselines",bond/"crystal_references")
+    for path in (combined/"bond_order_plots").glob("*.png"):
+        section="distributions" if path.name.endswith("_distributions.png") else "sample_systems" if path.name.startswith("representative_3d_") else "relationship_plots"
+        _relative_link(path,bond/section/path.name)
+    for name in ("bond_order_nodes.csv","bond_order_edges.csv","bond_order_summaries.csv","bond_order_system_values.csv","bond_order_angle_tests.csv","ruby_crystal_bond_distances.csv"):
+        _relative_link(combined/name,bond/"tables"/name)
+    neighborhoods=network/"local_neighborhoods"
+    _relative_link(root/"job2_subgraphs",neighborhoods/"artifacts")
+    _relative_link(combined/"job2_plots",neighborhoods/"figures")
+    for path in combined.glob("local_*.csv"):_relative_link(path,neighborhoods/"tables"/path.name)
+    high=force/"high_vs_non_high"
+    _relative_link(root/"job5_high_force_comparison",high/"artifacts")
+    for source_name,target_name in (("node_distributions","node"),("edge_distributions","edge")):
+        for path in (combined/"job5_high_force_plots"/source_name).glob("*.png"):_relative_link(path,high/"distributions"/target_name/path.name)
+    for source_name,target_name in (("node_simulation_points","node"),("edge_simulation_points","edge")):
+        for path in (combined/"job5_high_force_plots"/source_name).glob("*.png"):_relative_link(path,high/"simulation_mean_boxplots"/target_name/path.name)
+    for path in (combined/"job5_high_force_plots").glob("*.png"):_relative_link(path,high/"relationship_plots"/path.name)
+    for path in combined.glob("high_force_*.csv"):_relative_link(path,high/"tables"/path.name)
+    clusters=force/"connected_force_clusters"
+    _relative_link(root/"job6_force_clusters",clusters/"artifacts")
+    for path in (combined/"job6_force_cluster_plots").glob("*.png"):
+        section="distributions" if path.name.endswith("_distribution.png") else "simulation_mean_boxplots" if path.name.startswith("simulation_") else "sample_systems" if path.name.startswith("representative_3d_") else "relationship_plots"
+        _relative_link(path,clusters/section/path.name)
+    for name in ("force_clusters.csv","force_cluster_simulation_summaries.csv","force_cluster_angle_tests.csv","force_cluster_shape_plot_metadata.csv"):_relative_link(combined/name,clusters/"tables"/name)
+    _relative_link(combined/"basic_system_views",force/"sample_systems")
+    for path in force.rglob("*"):
+        if path.is_symlink() and not path.exists():path.unlink()
 
 def current_job2_files(directory,summary,cfg):
     files=[]
@@ -37,12 +92,13 @@ def js_distance(a,b,bins=128):
     edges=np.linspace(lo,hi,bins+1);pa,_=np.histogram(a,edges);pb,_=np.histogram(b,edges)
     return float(spatial_distance.jensenshannon(pa+1e-12,pb+1e-12,base=2))
 
-def plot_hist_safe(ax,values,label,color=None):
+def plot_hist_safe(ax,values,label,color=None,edges=None):
     x=finite(values)
     if not len(x): return np.array([])
     variable=np.ptp(x)>100*np.finfo(float).eps*max(1.0,float(np.max(np.abs(x))))
     if variable:
-        density,edges=np.histogram(x,bins=min(60,max(5,int(np.sqrt(len(x))))),density=True);ax.stairs(density,edges,label=label,color=color);return density[density>0]
+        if edges is None: edges=shared_histogram_edges([x])
+        density,_=np.histogram(x,bins=edges,density=True);ax.stairs(density,edges,label=label,color=color);return density[density>0]
     ax.axvline(float(np.mean(x)),label=f"{label} (constant)",color=color,linestyle="--")
     return np.array([])
 
@@ -98,17 +154,23 @@ def bond_reports(bond,root,cfg,edge_bond=None):
     for prop in ("q4","q6","qbar4","qbar6","mean_s6"):
         if prop not in bond:continue
         fig,ax=plt.subplots(figsize=(7,4.5))
+        edges=shared_histogram_edges([bond.loc[mask,prop] for _,mask,_ in systems])
         density_values=[]
         for label,mask,color in systems:
-            density_values.append(plot_hist_safe(ax,bond.loc[mask,prop],label,color))
+            density_values.append(plot_hist_safe(ax,bond.loc[mask,prop],label,color,edges))
+        if edges is not None: ax.set_xlim(edges[0],edges[-1])
         is_log=use_log_density_if_needed(ax,density_values);ax.set(xlabel=prop,ylabel="Density"+(" (log scale)" if is_log else ""),title=f"{prop} distributions"+(" — log density" if is_log else ""));ax.legend(frameon=False,ncol=2);fig.tight_layout();fig.savefig(plot_dir/f"{prop}_distributions.png",dpi=220);plt.close(fig)
     if edge_bond is not None and len(edge_bond):
         fig,ax=plt.subplots(figsize=(7,4.5))
+        edge_groups=[edge_bond.loc[edge_bond.system.str.startswith(f"ruby_{label}"),"s6"] for label in cfg["angles"]]
+        edge_groups.extend(edge_bond.loc[edge_bond.system==crystal,"s6"] for crystal in sorted(s for s in edge_bond.system.unique() if s.startswith("crystal_")))
+        edges=shared_histogram_edges(edge_groups)
         density_values=[]
         for label in cfg["angles"]:
             prefix=f"ruby_{label}";color=palette[label]
-            density_values.append(plot_hist_safe(ax,edge_bond.loc[edge_bond.system.str.startswith(prefix),"s6"],label,color))
-        for crystal in sorted(s for s in edge_bond.system.unique() if s.startswith("crystal_")): density_values.append(plot_hist_safe(ax,edge_bond.loc[edge_bond.system==crystal,"s6"],crystal.replace("crystal_",""),palette[crystal.replace("crystal_","")]))
+            density_values.append(plot_hist_safe(ax,edge_bond.loc[edge_bond.system.str.startswith(prefix),"s6"],label,color,edges))
+        for crystal in sorted(s for s in edge_bond.system.unique() if s.startswith("crystal_")): density_values.append(plot_hist_safe(ax,edge_bond.loc[edge_bond.system==crystal,"s6"],crystal.replace("crystal_",""),palette[crystal.replace("crystal_","")],edges))
+        if edges is not None: ax.set_xlim(edges[0],edges[-1])
         is_log=use_log_density_if_needed(ax,density_values);ax.set(xlabel="Contact S6",ylabel="Density"+(" (log scale)" if is_log else ""),title="Bond-order correlation"+(" — log density" if is_log else ""));ax.legend(frameon=False,ncol=2);fig.tight_layout();fig.savefig(plot_dir/"contact_s6_distributions.png",dpi=220);plt.close(fig)
     for xprop,yprop in (("q4","q6"),("what4","q6"),("what6","q6"),("coordination","q6")):
         fig,ax=plt.subplots(figsize=(6,5))
@@ -151,9 +213,12 @@ def _contrast_table(summary,identifiers,statistics):
         for stat_name in statistics:
             a=finite(g.loc[g.group=="non_high_force",stat_name]); b=finite(g.loc[g.group=="high_force",stat_name])
             if len(a) and len(b): rows.append({**key,"statistic":stat_name,"non_high_force":a[0],"high_force":b[0],"difference_high_minus_non":b[0]-a[0]})
-    return pd.DataFrame(rows)
+    columns=[*identifiers,"statistic","non_high_force","high_force","difference_high_minus_non"]
+    return pd.DataFrame(rows,columns=columns)
 
 def _replicate_comparisons(contrast,group_columns,cfg):
+    if contrast.empty or any(column not in contrast for column in group_columns):
+        return pd.DataFrame()
     rows=[]
     for keys,g in contrast.groupby(group_columns,dropna=False):
         key=dict(zip(group_columns,keys if isinstance(keys,tuple) else (keys,)))
@@ -178,16 +243,20 @@ def job5_complete_distribution_plots(root,plot,cfg):
     for scope in ("node","edge"):
         paths=sorted((root/"job5_high_force_comparison").glob(f"*_complete_{scope}s.csv"))
         if not paths:continue
-        frames=pd.concat([pd.read_csv(p) for p in paths],ignore_index=True);props=[c for c in frames if c not in ID_COLUMNS and c!="load_step"];(plot/f"{scope}_distributions").mkdir(exist_ok=True)
+        frames=pd.concat([pd.read_csv(p) for p in paths],ignore_index=True);props=[c for c in frames if c not in ID_COLUMNS and c!="load_step"];target=plot/f"{scope}_distributions";target.mkdir(exist_ok=True)
+        for obsolete in target.glob("*.png"):
+            if obsolete.stem not in props:obsolete.unlink()
         for prop in props:
             fig,axes=plt.subplots(1,len(cfg["angles"]),figsize=(5*len(cfg["angles"]),4),sharex=True,squeeze=False)
+            edges=shared_histogram_edges([frames.loc[(frames.angle==angle)&(frames.group==group),prop] for angle in cfg["angles"] for group in ("non_high_force","high_force")])
             for ax,angle in zip(axes.flat,cfg["angles"]):
                 density=[];angle_frame=frames[frames.angle==angle]
                 for group in ("non_high_force","high_force"):
-                    values=angle_frame.loc[angle_frame.group==group,prop];density.append(plot_hist_safe(ax,values,group.replace("_"," "),colors[group]))
+                    values=angle_frame.loc[angle_frame.group==group,prop];density.append(plot_hist_safe(ax,values,group.replace("_"," "),colors[group],edges))
                 is_log=use_log_density_if_needed(ax,density);ax.set(title=angle,xlabel=prop,ylabel="Density"+(" (log)" if is_log else ""))
+                if edges is not None: ax.set_xlim(edges[0],edges[-1])
                 if ax.get_legend_handles_labels()[0]:ax.legend(frameon=False)
-            fig.tight_layout();fig.savefig(plot/f"{scope}_distributions"/f"{prop}.png",dpi=180);plt.close(fig)
+            fig.tight_layout();fig.savefig(target/f"{prop}.png",dpi=180);plt.close(fig)
 
 def job5_reports(cfg,root,j5_complete,j5_centered):
     out=root/"combined_results"; plot=out/"job5_high_force_plots"; plot.mkdir(exist_ok=True)
@@ -210,7 +279,9 @@ def job5_reports(cfg,root,j5_complete,j5_centered):
             paths=sorted((root/"job5_high_force_comparison").glob(f"*_complete_{scope}s.csv"))
             if not paths:continue
             frames=pd.concat([pd.read_csv(p) for p in paths],ignore_index=True); props=[c for c in frames if c not in ID_COLUMNS and c!="load_step"]
-            (plot/f"{scope}_distributions").mkdir(exist_ok=True);(plot/f"{scope}_simulation_points").mkdir(exist_ok=True)
+            (plot/f"{scope}_distributions").mkdir(exist_ok=True);simulation_target=plot/f"{scope}_simulation_points";simulation_target.mkdir(exist_ok=True)
+            for obsolete in simulation_target.glob("*.png"):
+                if obsolete.stem not in props:obsolete.unlink()
             for prop in props:
                 means=summary[(summary.scope==scope)&(summary.property==prop)][["angle","sim_idx","group","mean"]]; cats=[(angle,group) for angle in cfg["angles"] for group in ("non_high_force","high_force")]
                 fig,ax=plt.subplots(figsize=(7,4));rng=np.random.default_rng(cfg["random_seed"])
@@ -247,10 +318,36 @@ def job6_reports(cfg,root,cluster_files,summary_files):
         if len(result):result.insert(0,"property",prop);tests.append(result)
     atomic_csv(out/"force_cluster_angle_tests.csv",pd.concat(tests,ignore_index=True) if tests else pd.DataFrame())
     colors=geometry_colors(cfg)
+    if clusters.empty:
+        for prop in ("cluster_count","largest_cluster_size","largest_cluster_fraction"):
+            fig,ax=plt.subplots(figsize=(6,4));data=[finite(summaries.loc[summaries.angle==a,prop]) for a in cfg["angles"]];ax.boxplot(data,labels=cfg["angles"])
+            for i,(angle,vals) in enumerate(zip(cfg["angles"],data),1):ax.scatter(np.full(len(vals),i),vals,color=colors[angle],s=18,alpha=.75)
+            ax.set(ylabel=prop,title=f"{prop.replace('_',' ').title()} per simulation");fig.tight_layout();fig.savefig(plot/f"simulation_{prop}.png",dpi=200);plt.close(fig)
+        atomic_json(out/"no_force_clusters.json",{"cluster_count":0,"simulations":len(summaries),"reason":"no edges satisfy the configured high-force threshold"})
+        return
     for prop,title in (("node_count","Force-cluster size distributions"),("diameter","Cluster diameter distributions"),("aspect_ratio","Cluster aspect ratios"),("principal_axis_loading_alignment","Principal-axis/loading alignment")):
         fig,ax=plt.subplots(figsize=(6,4));density=[]
-        for angle in cfg["angles"]:density.append(plot_hist_safe(ax,clusters.loc[clusters.angle==angle,prop],angle,colors[angle]))
+        edges=shared_histogram_edges([clusters.loc[clusters.angle==angle,prop] for angle in cfg["angles"]])
+        for angle in cfg["angles"]:density.append(plot_hist_safe(ax,clusters.loc[clusters.angle==angle,prop],angle,colors[angle],edges))
+        if edges is not None: ax.set_xlim(edges[0],edges[-1])
         use_log_density_if_needed(ax,density);ax.set(xlabel=prop,ylabel="Pooled descriptive density",title=title);ax.legend(frameon=False);fig.tight_layout();fig.savefig(plot/f"{prop}_distribution.png",dpi=200);plt.close(fig)
+    # A common, fixed-width zoom makes the bulk of the aspect-ratio distribution
+    # readable while retaining the full-range plot above for the extreme tail.
+    aspect_limit=100.0;aspect_edges=np.arange(0.0,aspect_limit+2.0,2.0);shape_metadata=[];fig,ax=plt.subplots(figsize=(6,4));density=[]
+    for angle in cfg["angles"]:
+        values=finite(clusters.loc[clusters.angle==angle,"aspect_ratio"]);displayed=values[values<=aspect_limit];omitted=len(values)-len(displayed);omitted_fraction=omitted/len(values) if len(values) else np.nan
+        label=f"{angle} ({len(displayed)}/{len(values)} shown; {omitted_fraction:.1%} > 100)" if len(values) else f"{angle} (no finite values)"
+        density.append(plot_hist_safe(ax,displayed,label,colors[angle],aspect_edges))
+        shape_metadata.append(dict(angle=angle,metric="aspect_ratio",display_min=0.0,display_max=aspect_limit,bin_width=2.0,finite_count=len(values),displayed_count=len(displayed),omitted_above_max=omitted,omitted_fraction=omitted_fraction))
+    use_log_density_if_needed(ax,density);ax.set(xlim=(0,aspect_limit),xlabel="aspect_ratio",ylabel=r"Conditional density ($A\leq100$)",title="Cluster aspect ratios: bulk range 0–100");ax.legend(frameon=False,fontsize=8);fig.tight_layout();fig.savefig(plot/"aspect_ratio_xmax100_distribution.png",dpi=200);plt.close(fig)
+    elongation_limit=40.0;elongation_edges=np.arange(0.0,elongation_limit+1.0,1.0);fig,ax=plt.subplots(figsize=(6,4));density=[]
+    for angle in cfg["angles"]:
+        values=finite(clusters.loc[clusters.angle==angle,"elongation"]);displayed=values[values<=elongation_limit];omitted=len(values)-len(displayed);omitted_fraction=omitted/len(values) if len(values) else np.nan
+        label=f"{angle} ({len(displayed)}/{len(values)} shown; {omitted_fraction:.1%} > 40)" if len(values) else f"{angle} (no finite values)"
+        density.append(plot_hist_safe(ax,displayed,label,colors[angle],elongation_edges))
+        shape_metadata.append(dict(angle=angle,metric="elongation",display_min=0.0,display_max=elongation_limit,bin_width=1.0,finite_count=len(values),displayed_count=len(displayed),omitted_above_max=omitted,omitted_fraction=omitted_fraction))
+    use_log_density_if_needed(ax,density);ax.set(xlim=(0,elongation_limit),xlabel="elongation",ylabel=r"Conditional density ($E\leq40$)",title=r"Cluster elongation $\sqrt{\lambda_1/\lambda_2}$: bulk range 0–40");ax.legend(frameon=False,fontsize=8);fig.tight_layout();fig.savefig(plot/"elongation_distribution.png",dpi=200);plt.close(fig)
+    atomic_csv(out/"force_cluster_shape_plot_metadata.csv",pd.DataFrame(shape_metadata))
     for x,y,name in (("node_count","diameter","size_vs_diameter"),("node_count","total_normal_force","size_vs_total_force")):
         fig,ax=plt.subplots(figsize=(6,4))
         for angle in cfg["angles"]:g=clusters[clusters.angle==angle];ax.scatter(g[x],g[y],s=12,alpha=.35,label=angle,color=colors[angle])
@@ -305,5 +402,6 @@ def main():
     job5_reports(cfg,root,j5complete,j5centered);job6_reports(cfg,root,j6clusters,j6summary)
     from plot_basic_high_force_systems import generate_views
     generate_views(cfg,root)
+    refresh_categorized_views(root)
     log.info("Merge complete; found=%s",found)
 if __name__=="__main__":main()

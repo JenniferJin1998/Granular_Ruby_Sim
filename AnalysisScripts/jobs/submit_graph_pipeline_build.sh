@@ -16,7 +16,7 @@ set -eo pipefail
 SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts"
 PIPELINE_DIR="${SCRIPT_DIR}/Pipeline"
 TMP_DIR="${SCRIPT_DIR}/jobs/tmp"
-PIPE_OUT="${GRAPHPIPE_OUT_PATH:-/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/graph_features}"
+PIPE_OUT="${GRAPHPIPE_OUT_PATH:-/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/0_graph_and_basic_stats/artifacts/raw_graph_data}"
 
 export PS1="${PS1:-}"
 source /home/yfjin/Research/anaconda3/etc/profile.d/conda.sh

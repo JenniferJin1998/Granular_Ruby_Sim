@@ -16,7 +16,7 @@ set -eo pipefail
 SCRIPT_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts"
 RUN_WHOLE_DIR="${SCRIPT_DIR}/RunWhole"
 TMP_DIR="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisScripts/jobs/tmp"
-OUTPUT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/tests/graph_generation_tests/0deg_first2_2x16"
+OUTPUT_ROOT="/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/0_graph_and_basic_stats/artifacts/tests/graph_generation/0deg_first2_2x16"
 RUN_OUTPUT_DIR="${OUTPUT_ROOT}/job_${SLURM_JOB_ID}"
 
 export PS1="${PS1:-}"

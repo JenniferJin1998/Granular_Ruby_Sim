@@ -41,7 +41,10 @@ def plot_system_on_axes(axes,G,cfg,box_lengths,periodic_axes,angle,sim):
         start=xyz[index[u]];delta=minimum_image(xyz[index[v]]-start,box_lengths,periodic_axes);target=red_segments if edge_labels[(u,v)] else gray_segments;target.extend(split_periodic_segment(start,delta,box_lengths,periodic_axes))
     high=np.asarray([node_labels[n] for n in nodes],bool);mins=xyz.min(0);maxs=xyz.max(0);span=np.maximum(maxs-mins,np.finfo(float).eps)
     for ax,(elev,azim,title) in zip(axes,VIEWS):
-        ax.add_collection3d(Line3DCollection(gray_segments,colors="#888888",linewidths=.28,alpha=.20,rasterized=True));ax.add_collection3d(Line3DCollection(red_segments,colors="#D62728",linewidths=1.15,alpha=.92,rasterized=True))
+        if gray_segments:
+            ax.add_collection3d(Line3DCollection(gray_segments,colors="#888888",linewidths=.28,alpha=.20,rasterized=True))
+        if red_segments:
+            ax.add_collection3d(Line3DCollection(red_segments,colors="#D62728",linewidths=1.15,alpha=.92,rasterized=True))
         ax.scatter(xyz[~high,0],xyz[~high,1],xyz[~high,2],s=2.2,c="#9A9A9A",alpha=.42,depthshade=False,rasterized=True);ax.scatter(xyz[high,0],xyz[high,1],xyz[high,2],s=8,c="#D62728",alpha=.95,depthshade=False,rasterized=True)
         ax.view_init(elev=elev,azim=azim);ax.set_proj_type("persp" if title=="Perspective 3D" else "ortho");ax.set(xlim=(mins[0],maxs[0]),ylim=(mins[1],maxs[1]),zlim=(mins[2],maxs[2]),title=title);ax.set_box_aspect(span);ax.set_axis_off()
     axes[0].text2D(.02,.96,f"{angle}, simulation {sim}",transform=axes[0].transAxes,fontsize=11,weight="bold")

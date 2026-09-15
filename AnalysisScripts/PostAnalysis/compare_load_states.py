@@ -12,8 +12,8 @@ import pandas as pd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ANALYSIS_RESULTS_DIR = SCRIPT_DIR.parent.parent / "AnalysisResults"
-DEFAULT_FINAL_DIR = ANALYSIS_RESULTS_DIR / "final_load" / "graph_features"
-DEFAULT_JAMMING_DIR = ANALYSIS_RESULTS_DIR / "jamming" / "graph_features_final_threshold"
+DEFAULT_FINAL_DIR = ANALYSIS_RESULTS_DIR / "final_load" / "0_graph_and_basic_stats" / "graph_data"
+DEFAULT_JAMMING_DIR = ANALYSIS_RESULTS_DIR / "jamming" / "2_force_cluster_comparison" / "artifacts" / "graph_data_final_threshold"
 DEFAULT_OUT_DIR = ANALYSIS_RESULTS_DIR / "cross_state" / "final_vs_jamming_final_threshold"
 
 NODE_KEYS = ["geometry", "sim_idx", "node_id"]

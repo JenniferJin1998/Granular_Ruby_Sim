@@ -1753,7 +1753,8 @@ def _infer_particles_per_simulation(particle_positions, contact_counts, label):
 # === Staged pipeline helpers ===
 PIPELINE_OUT_PATH = os.environ.get(
     'GRAPHPIPE_OUT_PATH',
-    os.path.join(PROJECT_ROOT, 'AnalysisResults', 'periodic_boundaries', RESULTS_RUN_TAG, 'graph_features'),
+    os.path.join(PROJECT_ROOT, 'AnalysisResults', 'periodic_boundaries', RESULTS_RUN_TAG,
+                 '0_graph_and_basic_stats', 'artifacts', 'raw_graph_data'),
 )
 SIM_OUTPUT_DIR = os.path.join(PIPELINE_OUT_PATH, 'simulations')
 RAW_GRAPH_DIR = os.path.join(PIPELINE_OUT_PATH, 'raw_graphs')

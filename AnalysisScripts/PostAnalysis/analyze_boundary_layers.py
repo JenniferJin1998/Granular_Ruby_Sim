@@ -13,9 +13,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import pickle
 import re
 import warnings
 from collections import deque
+from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
 
@@ -32,11 +34,57 @@ from scipy import stats
 
 PROJECT = Path(__file__).resolve().parents[2]
 DATASETS = {
-    "periodic_boundaries_2026-08-03": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "graph_features",
-    "final_load": PROJECT / "AnalysisResults" / "final_load" / "graph_features",
+    "periodic_boundaries_2026-08-03": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "_archive_pre_periodic_correction" / "graph_features",
+    "periodic_boundaries_corrected": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "0_graph_and_basic_stats" / "graph_data",
+    "final_load": PROJECT / "AnalysisResults" / "final_load" / "0_graph_and_basic_stats" / "graph_data",
+    "jamming": PROJECT / "AnalysisResults" / "jamming" / "0_graph_and_basic_stats" / "graph_data",
+    "periodic_force_split2": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "0_graph_and_basic_stats" / "force_splits" / "force_split2",
+    "final_load_force_split2": PROJECT / "AnalysisResults" / "final_load" / "0_graph_and_basic_stats" / "force_splits" / "force_split2",
+    "jamming_final_threshold": PROJECT / "AnalysisResults" / "jamming" / "2_force_cluster_comparison" / "artifacts" / "graph_data_final_threshold",
+}
+BOUNDARY_OUTPUTS = {
+    "periodic_boundaries_2026-08-03": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "_archive_pre_periodic_correction" / "boundary_layers",
+    "periodic_boundaries_corrected": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "1_network_property_comparison" / "boundary_layers",
+    "final_load": PROJECT / "AnalysisResults" / "final_load" / "1_network_property_comparison" / "boundary_layers",
+    "jamming": PROJECT / "AnalysisResults" / "jamming" / "1_network_property_comparison" / "boundary_layers",
+    "periodic_force_split2": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "1_network_property_comparison" / "force_splits" / "force_split2" / "boundary_layers",
+    "final_load_force_split2": PROJECT / "AnalysisResults" / "final_load" / "1_network_property_comparison" / "force_splits" / "force_split2" / "boundary_layers",
+    "jamming_final_threshold": PROJECT / "AnalysisResults" / "jamming" / "1_network_property_comparison" / "boundary_layers",
+}
+GEOMETRY_METADATA = {
+    "periodic_boundaries_2026-08-03": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "_archive_pre_periodic_correction" / "local_structure" / "job0_metadata" / "geometry_estimate.json",
+    "periodic_boundaries_corrected": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "1_network_property_comparison" / "artifacts" / "local_structure_pipeline" / "job0_metadata" / "geometry_estimate.json",
+    "final_load": PROJECT / "AnalysisResults" / "final_load" / "1_network_property_comparison" / "artifacts" / "local_structure_pipeline" / "job0_metadata" / "geometry_estimate.json",
+    "jamming": PROJECT / "AnalysisResults" / "jamming" / "1_network_property_comparison" / "artifacts" / "local_structure_pipeline" / "job0_metadata" / "geometry_estimate.json",
+    "periodic_force_split2": PROJECT / "AnalysisResults" / "periodic_boundaries" / "2026-08-03" / "1_network_property_comparison" / "force_splits" / "force_split2" / "artifacts" / "local_structure_pipeline" / "job0_metadata" / "geometry_estimate.json",
+    "final_load_force_split2": PROJECT / "AnalysisResults" / "final_load" / "1_network_property_comparison" / "force_splits" / "force_split2" / "artifacts" / "local_structure_pipeline" / "job0_metadata" / "geometry_estimate.json",
+    "jamming_final_threshold": PROJECT / "AnalysisResults" / "jamming" / "1_network_property_comparison" / "artifacts" / "local_structure_pipeline" / "job0_metadata" / "geometry_estimate.json",
+}
+WALL_LABEL_GRAPH_SOURCES = {
+    "final_load": DATASETS["final_load"] / "graph_dict_labeled.pkl",
+    # The locally reconstructed jamming graph reproduces the topology, but its
+    # source feature CSV omitted wall_label. The original graph retains it.
+    "jamming": Path("/nfs/turbo/meche-abucsek/Yuefeng/Granular_Project/Simulation/BoundaryAngle_Container/Jamming/GraphConstruction/graph_dict_labeled.pkl"),
+    "periodic_force_split2": DATASETS["periodic_force_split2"] / "graph_dict_labeled.pkl",
+    "final_load_force_split2": DATASETS["final_load_force_split2"] / "graph_dict_labeled.pkl",
+    "jamming_final_threshold": Path("/nfs/turbo/meche-abucsek/Yuefeng/Granular_Project/Simulation/BoundaryAngle_Container/Jamming/GraphConstruction/graph_dict_labeled.pkl"),
 }
 NODE_EXCLUDE = {"geometry", "sim_idx", "node_id", "x", "y", "z", "is_wall", "in_center_region", "principal_eigenvector", "force_chain_role"}
-EDGE_EXCLUDE = {"geometry", "sim_idx", "node1", "node2", "contact_x", "contact_y", "contact_z", "n_x", "n_y", "n_z", "t_x", "t_y", "t_z", "is_core_edge", "is_wall_contact"}
+EDGE_EXCLUDE = {"geometry", "sim_idx", "node1", "node2", "contact_x", "contact_y", "contact_z", "n_x", "n_y", "n_z", "t_x", "t_y", "t_z", "is_core_edge", "is_wall_contact", "wall_label", "angle_with_zz_original", "angle_with_zz_periodic", "periodic_dx", "periodic_dy", "periodic_dz", "periodic_distance", "periodic_shift_x", "periodic_shift_y", "crosses_periodic_x", "crosses_periodic_y", "is_periodic_crossing"}
+BOUNDARY_REFERENCES = ("all", "top_bottom", "top", "bottom")
+WALL_LABELS_BY_DATASET = {
+    # The periodic cell has no side walls. Its bottom and top meshes use three
+    # and two negative labels, respectively.
+    "periodic_boundaries_2026-08-03": {"bottom": {-1, -2, -3}, "top": {-4, -5}, "side": set()},
+    "periodic_boundaries_corrected": {"bottom": {-1, -2, -3}, "top": {-4, -5}, "side": set()},
+    # In the nonperiodic container, the wall-normal audit gives -1 as side,
+    # -2 as bottom, and -3/-4 as the two top-surface components.
+    "final_load": {"bottom": {-2}, "top": {-3, -4}, "side": {-1}},
+    "jamming": {"bottom": {-2}, "top": {-3, -4}, "side": {-1}},
+    "periodic_force_split2": {"bottom": {-1, -2, -3}, "top": {-4, -5}, "side": set()},
+    "final_load_force_split2": {"bottom": {-2}, "top": {-3, -4}, "side": {-1}},
+    "jamming_final_threshold": {"bottom": {-2}, "top": {-3, -4}, "side": {-1}},
+}
 SHELL_ORDER = ["0 (boundary)", "1", "rest (>=2/unreached)"]
 VIEWS = [
     ("Perspective", 24, -52),
@@ -102,13 +150,65 @@ def normalize_endpoint(value):
     return value
 
 
+@lru_cache(maxsize=None)
+def graph_wall_label_lookup(graph_path: str) -> dict[tuple[str, int, object], int]:
+    """Recover wall labels that were omitted from exported edge feature CSVs."""
+    with Path(graph_path).open("rb") as handle:
+        graph_dict = pickle.load(handle)
+    lookup = {}
+    for geometry, graph_views in graph_dict.items():
+        for sim_idx, graph in enumerate(graph_views["full"]):
+            for node, attrs in graph.nodes(data=True):
+                label = attrs.get("wall_label")
+                if attrs.get("is_wall", False) and label is not None and np.isfinite(label):
+                    lookup[(str(geometry), int(sim_idx), normalize_endpoint(node))] = int(label)
+    return lookup
+
+
+def ensure_wall_labels(dataset: str, edges: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    """Return CSV wall labels or restore them from the corresponding full graph."""
+    result = edges.copy()
+    if "wall_label" not in result:
+        result["wall_label"] = np.nan
+    wall_mask = result.is_wall_contact.astype(bool)
+    missing_mask = wall_mask & pd.to_numeric(result.wall_label, errors="coerce").isna()
+    if not missing_mask.any():
+        return result, "edge_features.csv"
+    graph_path = WALL_LABEL_GRAPH_SOURCES.get(dataset)
+    if graph_path is None or not graph_path.exists():
+        raise FileNotFoundError(f"Wall-label graph source is required for {dataset}: {graph_path}")
+    lookup = graph_wall_label_lookup(str(graph_path.resolve()))
+    for index, row in result.loc[missing_mask, ["geometry", "sim_idx", "node1", "node2"]].iterrows():
+        key_prefix = (str(row.geometry), int(row.sim_idx))
+        label = lookup.get(key_prefix + (row.node1,))
+        if label is None:
+            label = lookup.get(key_prefix + (row.node2,))
+        if label is not None:
+            result.at[index, "wall_label"] = label
+    unresolved = wall_mask & pd.to_numeric(result.wall_label, errors="coerce").isna()
+    if unresolved.any():
+        raise ValueError(f"Could not recover wall labels for {int(unresolved.sum())} {dataset} wall-contact rows")
+    return result, str(graph_path.resolve())
+
+
 def shell_label(distance: float) -> str:
     if not np.isfinite(distance) or distance >= 2:
         return SHELL_ORDER[-1]
     return "0 (boundary)" if int(distance) == 0 else str(int(distance))
 
 
-def assign_shells(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, list[dict]]:
+def selected_wall_labels(dataset: str, boundary_reference: str) -> set[int] | None:
+    """Return selected labels; None means every wall-contact record."""
+    if boundary_reference == "all":
+        return None
+    labels = WALL_LABELS_BY_DATASET[dataset]
+    if boundary_reference == "top_bottom":
+        return labels["top"] | labels["bottom"]
+    return labels[boundary_reference]
+
+
+def assign_shells(nodes: pd.DataFrame, edges: pd.DataFrame, dataset: str, boundary_reference: str = "all") -> tuple[pd.DataFrame, pd.DataFrame, list[dict]]:
+    reference_labels = selected_wall_labels(dataset, boundary_reference)
     node_parts, edge_parts, audit = [], [], []
     keys = sorted(set(map(tuple, nodes[["geometry", "sim_idx"]].drop_duplicates().to_numpy())))
     for geometry, sim_idx in keys:
@@ -117,15 +217,24 @@ def assign_shells(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFram
         particle_ids = set(n.node_id.tolist())
         adjacency = {node: [] for node in particle_ids}
         boundary = set()
-        for row in e[["node1", "node2", "is_wall_contact"]].itertuples(index=False):
-            u, v, wall = row
+        wall_columns = ["node1", "node2", "is_wall_contact"]
+        if "wall_label" in e:
+            wall_columns.append("wall_label")
+        elif reference_labels is not None:
+            raise ValueError(f"{boundary_reference} boundary analysis requires wall_label in edge_features.csv")
+        for row in e[wall_columns].itertuples(index=False):
+            u, v, wall = row[:3]
             u_particle, v_particle = u in particle_ids, v in particle_ids
-            if bool(wall):
+            wall_label = row[3] if len(row) > 3 else np.nan
+            selected_wall = reference_labels is None or (
+                np.isfinite(wall_label) and int(wall_label) in reference_labels
+            )
+            if bool(wall) and selected_wall:
                 if u_particle:
                     boundary.add(u)
                 if v_particle:
                     boundary.add(v)
-            elif u_particle and v_particle:
+            elif not bool(wall) and u_particle and v_particle:
                 adjacency[u].append(v)
                 adjacency[v].append(u)
         distance = {node: math.inf for node in particle_ids}
@@ -149,7 +258,7 @@ def assign_shells(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFram
         e["boundary_distance"] = edge_distance
         e["boundary_shell"] = pd.Categorical(e.boundary_distance.map(shell_label), SHELL_ORDER, ordered=True)
         counts = n.boundary_shell.value_counts().reindex(SHELL_ORDER, fill_value=0)
-        audit.append({"geometry": geometry, "sim_idx": int(sim_idx), "particle_nodes": len(n), "particle_contacts": len(e),
+        audit.append({"geometry": geometry, "sim_idx": int(sim_idx), "boundary_reference": boundary_reference, "particle_nodes": len(n), "particle_contacts": len(e),
                       "boundary_nodes": len(boundary), "unreached_nodes": int(np.isinf(n.boundary_distance).sum()),
                       **{f"node_shell_{safe_name(k)}": int(v) for k, v in counts.items()}})
         node_parts.append(n)
@@ -315,7 +424,7 @@ def plot_3d_maps(nodes: pd.DataFrame, edges: pd.DataFrame, properties: list[str]
 
 
 def distribution_outputs(df: pd.DataFrame, properties: list[str], level: str, output: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    plot_dir = output / f"{level}_property_distributions"
+    plot_dir = output / level
     plot_dir.mkdir(parents=True, exist_ok=True)
     summary_rows, test_rows = [], []
     geometries = sorted(df.geometry.unique())
@@ -384,7 +493,7 @@ def benjamini_hochberg(pvalues: pd.Series) -> np.ndarray:
 
 def simulation_summary_outputs(df: pd.DataFrame, properties: list[str], level: str, output: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Compare per-simulation means/medians across geometry angles."""
-    plot_dir = output / f"{level}_simulation_mean_median"
+    plot_dir = output / level
     plot_dir.mkdir(parents=True, exist_ok=True)
     geometries = sorted(df.geometry.unique())
     value_rows, test_rows = [], []
@@ -449,7 +558,7 @@ def force_label(level: str) -> str:
 
 def force_split_histogram_outputs(df: pd.DataFrame, properties: list[str], level: str, output: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Overlay stored force/non-force populations within requested boundary groups."""
-    plot_dir = output / f"{level}_force_split_histograms"
+    plot_dir = output / level
     plot_dir.mkdir(parents=True, exist_ok=True)
     geometries = sorted(df.geometry.unique())
     force_mask_all = df[force_label(level)].fillna(False).astype(bool).to_numpy()
@@ -514,7 +623,7 @@ def paired_force_test(xa: np.ndarray, xb: np.ndarray) -> tuple[float, float]:
 
 def force_split_simulation_outputs(df: pd.DataFrame, properties: list[str], level: str, output: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Simulation-replicate mean/median plots and tests, split by force label."""
-    plot_dir = output / f"{level}_force_split_simulation_mean_median"
+    plot_dir = output / level
     plot_dir.mkdir(parents=True, exist_ok=True)
     geometries = sorted(df.geometry.unique())
     force_column = force_label(level)
@@ -602,13 +711,16 @@ def force_split_simulation_outputs(df: pd.DataFrame, properties: list[str], leve
     return values, tests
 
 
-def write_readme(output: Path, name: str, source: Path, node_props: list[str], edge_props: list[str], representative: dict[str, int]) -> None:
+def write_readme(output: Path, name: str, source: Path, node_props: list[str], edge_props: list[str], representative: dict[str, int], boundary_reference: str, wall_label_source: str) -> None:
     audit_inventory = ""
     if name.startswith("Periodic"):
         audit_inventory = """| `RAW_EDGE_PROVENANCE_AUDIT.md` | Trace of long-coordinate periodic edges back to the available raw force-contact data. |
 | `raw_edge_provenance_audit.csv` | Per-simulation raw-pair versus graph-pair equality counts for 0°. |
 """
-    text = f"""# {name}: property and boundary-layer analysis
+    label_groups = WALL_LABELS_BY_DATASET[name]
+    selected = selected_wall_labels(name, boundary_reference)
+    selected_description = "every wall label (top, bottom, and side)" if selected is None else str(sorted(selected))
+    text = f"""# {name}: {boundary_reference}-surface boundary-layer analysis
 
 ## What is in this folder
 
@@ -616,14 +728,13 @@ This is a generated, restartable analysis of `{source}`. The source feature tabl
 
 | Path | Contents |
 |---|---|
-| `node_properties_3d/` | Force-cluster montage per node property, with perspective and x/y/z projections. Force nodes carry the property color, force edges are light red, and the background network is light gray. |
-| `edge_properties_3d/` | Force-cluster montage per edge property. Force edges carry the property color, force nodes are light red, and the background network is light gray. |
-| `boundary_distributions/node_property_distributions/` | Two requested views for every node property: 0 vs rest, then three separate curves for 0, 1, and rest. |
-| `boundary_distributions/edge_property_distributions/` | The same two contrasts for every particle-contact property. |
-| `boundary_distributions/node_simulation_mean_median/` | Per-simulation node-property mean/median distributions compared across boundary angles for groups 0, 1, and rest. |
-| `boundary_distributions/edge_simulation_mean_median/` | The corresponding particle-contact comparisons. |
-| `boundary_distributions/*_force_split_histograms/` | Force-cluster versus non-force histograms under both requested boundary grouping schemes. |
-| `boundary_distributions/*_force_split_simulation_mean_median/` | Force/non-force per-simulation mean/median distributions across boundary angles. |
+| `sample_systems/node_properties/` | Force-cluster montage per node property, with perspective and x/y/z projections. |
+| `sample_systems/edge_properties/` | Corresponding particle-contact property montages. |
+| `distributions/property/{{node,edge}}/` | Pooled boundary-distance distributions using shared bins. |
+| `distributions/force_split/{{node,edge}}/` | Force versus non-force distributions using shared bins. |
+| `simulation_mean_boxplots/property/{{node,edge}}/` | Per-simulation property mean/median comparisons. |
+| `simulation_mean_boxplots/force_split/{{node,edge}}/` | Per-simulation force/non-force mean/median comparisons. |
+| `tables/` | Machine-readable assignments, summaries, color limits, and statistical tests. |
 | `nodes_with_boundary_distance.csv.gz` | Node features plus exact graph distance and grouped shell. |
 | `edges_with_boundary_distance.csv.gz` | Edge features plus exact distance and grouped shell. |
 | `*_property_summary_by_shell.csv` | Counts, mean, median, standard deviation, P5, and P95. |
@@ -638,7 +749,10 @@ This is a generated, restartable analysis of `{source}`. The source feature tabl
 
 ## Conventions
 
-- Boundary node (distance 0): a particle incident to a contact where `is_wall_contact=True`.
+- Boundary reference: `{boundary_reference}`; selected labels: {selected_description}.
+- Dataset wall groups: top={sorted(label_groups['top'])}, bottom={sorted(label_groups['bottom'])}, side={sorted(label_groups['side'])}.
+- Wall-label source: `{wall_label_source}`.
+- Boundary node (distance 0): a particle directly contacting a selected reference wall.
 - Node distance: shortest number of particle-particle contacts from a boundary particle.
 - Edge distance: the smaller distance of its two particle endpoints. Thus a particle-particle contact incident to a boundary particle is edge distance 0.
 - Wall placeholders and wall-contact edges are used only to identify boundary particles. They are excluded from all analyzed tables, plots, distributions, and tests.
@@ -662,16 +776,16 @@ This is a generated, restartable analysis of `{source}`. The source feature tabl
 From the repository root:
 
 ```bash
-python AnalysisScripts/PostAnalysis/analyze_boundary_layers.py
+python AnalysisScripts/PostAnalysis/analyze_boundary_layers.py --datasets final_load jamming --boundary-references all top_bottom top bottom
 ```
 
-Use `--datasets final_load` (or the periodic dataset key) to run one target. Use `--lower-percentile 10 --upper-percentile 90` for P10/P90 color clipping.
+Use `--datasets final_load jamming` (or a periodic dataset key) to select targets. Use `--lower-percentile 10 --upper-percentile 90` for P10/P90 color clipping.
 """
     (output / "README.md").write_text(text)
 
 
-def analyze(name: str, source: Path, lower: float, upper: float, skip_3d: bool = False) -> None:
-    output = source.parent / "boundary_layers"
+def analyze(name: str, source: Path, lower: float, upper: float, boundary_reference: str = "all", skip_3d: bool = False) -> None:
+    output = BOUNDARY_OUTPUTS[name] / f"{boundary_reference}_surfaces"
     output.mkdir(parents=True, exist_ok=True)
     for obsolete in ("node_geometry_tests_by_shell.csv", "edge_geometry_tests_by_shell.csv"):
         (output / obsolete).unlink(missing_ok=True)
@@ -679,54 +793,64 @@ def analyze(name: str, source: Path, lower: float, upper: float, skip_3d: bool =
     edges = pd.read_csv(source / "edge_features.csv")
     edges["node1"] = edges["node1"].map(normalize_endpoint)
     edges["node2"] = edges["node2"].map(normalize_endpoint)
+    edges, wall_label_source = ensure_wall_labels(name, edges)
     node_props = scalar_properties(nodes, NODE_EXCLUDE)
     edge_props = scalar_properties(edges, EDGE_EXCLUDE)
-    nodes, edges, audit = assign_shells(nodes, edges)
+    nodes, edges, audit = assign_shells(nodes, edges, dataset=name, boundary_reference=boundary_reference)
     node_limits = color_limits(nodes, node_props, lower, upper)
     edge_limits = color_limits(edges, edge_props, lower, upper)
     representative = representative_simulations(nodes)
     box_lengths, periodic_axes = {}, []
-    geometry_path = source.parent / "local_structure" / "job0_metadata" / "geometry_estimate.json"
+    geometry_path = GEOMETRY_METADATA[name]
     if geometry_path.exists():
         geometry = json.loads(geometry_path.read_text())
         box_lengths = {int(axis): float(length) for axis, length in geometry.get("box_lengths", {}).items()}
         periodic_axes = [int(axis) for axis in geometry.get("periodic_axes", [])]
     if not skip_3d:
-        plot_3d_maps(nodes, edges, node_props, "node", node_limits, output / "node_properties_3d", representative,
+        plot_3d_maps(nodes, edges, node_props, "node", node_limits, output / "sample_systems" / "node_properties", representative,
                      box_lengths=box_lengths, periodic_axes=periodic_axes)
-        plot_3d_maps(nodes, edges, edge_props, "edge", edge_limits, output / "edge_properties_3d", representative,
+        plot_3d_maps(nodes, edges, edge_props, "edge", edge_limits, output / "sample_systems" / "edge_properties", representative,
                      box_lengths=box_lengths, periodic_axes=periodic_axes)
-    dist = output / "boundary_distributions"; dist.mkdir(exist_ok=True)
-    ns, nt = distribution_outputs(nodes, node_props, "node", dist)
-    es, et = distribution_outputs(edges, edge_props, "edge", dist)
-    nsv, nst = simulation_summary_outputs(nodes, node_props, "node", dist)
-    esv, est = simulation_summary_outputs(edges, edge_props, "edge", dist)
-    nfhs, nfht = force_split_histogram_outputs(nodes, node_props, "node", dist)
-    efhs, efht = force_split_histogram_outputs(edges, edge_props, "edge", dist)
-    nfsv, nfst = force_split_simulation_outputs(nodes, node_props, "node", dist)
-    efsv, efst = force_split_simulation_outputs(edges, edge_props, "edge", dist)
-    nodes.to_csv(output / "nodes_with_boundary_distance.csv.gz", index=False)
-    edges.to_csv(output / "edges_with_boundary_distance.csv.gz", index=False)
-    pd.DataFrame(audit).to_csv(output / "boundary_assignment_audit.csv", index=False)
-    node_limits.to_csv(output / "node_property_color_limits.csv", index=False)
-    edge_limits.to_csv(output / "edge_property_color_limits.csv", index=False)
-    ns.to_csv(output / "node_property_summary_by_shell.csv", index=False)
-    es.to_csv(output / "edge_property_summary_by_shell.csv", index=False)
-    nt.to_csv(output / "node_boundary_contrast_tests.csv", index=False)
-    et.to_csv(output / "edge_boundary_contrast_tests.csv", index=False)
-    nsv.to_csv(output / "node_simulation_mean_median_values.csv", index=False)
-    esv.to_csv(output / "edge_simulation_mean_median_values.csv", index=False)
-    nst.to_csv(output / "node_simulation_angle_tests.csv", index=False)
-    est.to_csv(output / "edge_simulation_angle_tests.csv", index=False)
-    nfhs.to_csv(output / "node_force_split_pooled_summary.csv", index=False)
-    efhs.to_csv(output / "edge_force_split_pooled_summary.csv", index=False)
-    nfht.to_csv(output / "node_force_split_pooled_tests.csv", index=False)
-    efht.to_csv(output / "edge_force_split_pooled_tests.csv", index=False)
-    nfsv.to_csv(output / "node_force_split_simulation_values.csv", index=False)
-    efsv.to_csv(output / "edge_force_split_simulation_values.csv", index=False)
-    nfst.to_csv(output / "node_force_split_simulation_tests.csv", index=False)
-    efst.to_csv(output / "edge_force_split_simulation_tests.csv", index=False)
-    metadata = {"dataset": name, "source": str(source), "boundary_definition": "particle incident to is_wall_contact edge",
+    distributions = output / "distributions"
+    sample_means = output / "simulation_mean_boxplots"
+    tables = output / "tables"
+    tables.mkdir(parents=True, exist_ok=True)
+    ns, nt = distribution_outputs(nodes, node_props, "node", distributions / "property")
+    es, et = distribution_outputs(edges, edge_props, "edge", distributions / "property")
+    nsv, nst = simulation_summary_outputs(nodes, node_props, "node", sample_means / "property")
+    esv, est = simulation_summary_outputs(edges, edge_props, "edge", sample_means / "property")
+    nfhs, nfht = force_split_histogram_outputs(nodes, node_props, "node", distributions / "force_split")
+    efhs, efht = force_split_histogram_outputs(edges, edge_props, "edge", distributions / "force_split")
+    nfsv, nfst = force_split_simulation_outputs(nodes, node_props, "node", sample_means / "force_split")
+    efsv, efst = force_split_simulation_outputs(edges, edge_props, "edge", sample_means / "force_split")
+    nodes.to_csv(tables / "nodes_with_boundary_distance.csv.gz", index=False)
+    edges.to_csv(tables / "edges_with_boundary_distance.csv.gz", index=False)
+    pd.DataFrame(audit).to_csv(tables / "boundary_assignment_audit.csv", index=False)
+    node_limits.to_csv(tables / "node_property_color_limits.csv", index=False)
+    edge_limits.to_csv(tables / "edge_property_color_limits.csv", index=False)
+    ns.to_csv(tables / "node_property_summary_by_shell.csv", index=False)
+    es.to_csv(tables / "edge_property_summary_by_shell.csv", index=False)
+    nt.to_csv(tables / "node_boundary_contrast_tests.csv", index=False)
+    et.to_csv(tables / "edge_boundary_contrast_tests.csv", index=False)
+    nsv.to_csv(tables / "node_simulation_mean_median_values.csv", index=False)
+    esv.to_csv(tables / "edge_simulation_mean_median_values.csv", index=False)
+    nst.to_csv(tables / "node_simulation_angle_tests.csv", index=False)
+    est.to_csv(tables / "edge_simulation_angle_tests.csv", index=False)
+    nfhs.to_csv(tables / "node_force_split_pooled_summary.csv", index=False)
+    efhs.to_csv(tables / "edge_force_split_pooled_summary.csv", index=False)
+    nfht.to_csv(tables / "node_force_split_pooled_tests.csv", index=False)
+    efht.to_csv(tables / "edge_force_split_pooled_tests.csv", index=False)
+    nfsv.to_csv(tables / "node_force_split_simulation_values.csv", index=False)
+    efsv.to_csv(tables / "edge_force_split_simulation_values.csv", index=False)
+    nfst.to_csv(tables / "node_force_split_simulation_tests.csv", index=False)
+    efst.to_csv(tables / "edge_force_split_simulation_tests.csv", index=False)
+    reference_labels = selected_wall_labels(name, boundary_reference)
+    all_label_groups = WALL_LABELS_BY_DATASET[name]
+    metadata = {"dataset": name, "source": str(source), "boundary_reference": boundary_reference,
+                "selected_wall_labels": sorted(reference_labels if reference_labels is not None else set().union(*all_label_groups.values())),
+                "wall_label_groups": {key: sorted(values) for key, values in all_label_groups.items()},
+                "wall_label_source": wall_label_source,
+                "boundary_definition": "particle incident to a selected top/bottom is_wall_contact edge",
                 "node_distance": "shortest particle-contact path from boundary", "edge_distance": "minimum endpoint node distance for particle-particle contacts",
                 "analysis_view": "particle nodes and particle-particle contacts only; wall records used only to seed boundary",
                 "force_visualization": "property color only on stored force nodes/edges; opposite force entity light red; background light gray",
@@ -736,20 +860,25 @@ def analyze(name: str, source: Path, lower: float, upper: float, skip_3d: bool =
                 "views": [x[0] for x in VIEWS], "color_percentiles": [lower, upper], "representative_simulations": representative,
                 "node_properties": node_props, "edge_properties": edge_props}
     (output / "analysis_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    write_readme(output, name, source, node_props, edge_props, representative)
+    write_readme(output, name, source, node_props, edge_props, representative, boundary_reference, wall_label_source)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=list(DATASETS))
+    parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=["periodic_boundaries_corrected", "final_load"])
     parser.add_argument("--lower-percentile", type=float, default=5)
     parser.add_argument("--upper-percentile", type=float, default=95)
+    parser.add_argument("--boundary-references", nargs="+", choices=BOUNDARY_REFERENCES, default=["all"],
+                        help="Wall surfaces used as graph-distance zero")
     parser.add_argument("--skip-3d", action="store_true", help="Regenerate tables/distributions without rerendering existing 3-D figures")
     args = parser.parse_args()
     if not 0 <= args.lower_percentile < args.upper_percentile <= 100:
         parser.error("percentiles must satisfy 0 <= lower < upper <= 100")
     for name in args.datasets:
-        analyze(name, DATASETS[name], args.lower_percentile, args.upper_percentile, skip_3d=args.skip_3d)
+        for index, reference in enumerate(args.boundary_references):
+            analyze(name, DATASETS[name], args.lower_percentile, args.upper_percentile,
+                    boundary_reference=reference,
+                    skip_3d=args.skip_3d or index > 0)
 
 
 if __name__ == "__main__":

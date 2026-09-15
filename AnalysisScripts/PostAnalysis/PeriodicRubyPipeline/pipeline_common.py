@@ -30,7 +30,9 @@ def load_config(path=CONFIG_PATH):
     configured_root = cfg.get("project_root")
     root = Path(configured_root).expanduser() if configured_root else HERE.parents[2]
     cfg["project_root"] = root
-    for key in ("graph_pickle", "existing_results", "output_root"):
+    for key in ("graph_pickle", "existing_results", "output_root", "analysis_root", "force_presentation_root"):
+        if key not in cfg:
+            continue
         value = Path(cfg[key])
         cfg[key] = value if value.is_absolute() else root / value
     cfg["config_path"] = Path(path).resolve()
@@ -171,6 +173,26 @@ def unsuffixed(keys, cfg):
 def finite(values):
     x = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(float)
     return x[np.isfinite(x)]
+
+
+def shared_histogram_edges(value_groups, bins=60):
+    """Return one bin grid for every population compared in a figure."""
+    arrays = [finite(values) for values in value_groups]
+    arrays = [values for values in arrays if values.size]
+    if not arrays:
+        return None
+    pooled = np.concatenate(arrays)
+    scale = max(1.0, float(np.max(np.abs(pooled))))
+    if np.ptp(pooled) <= 100 * np.finfo(float).eps * scale:
+        return None
+    # Preserve natural unit-width bins for modest-range discrete properties
+    # such as coordination, node count, and graph diameter.
+    if np.allclose(pooled, np.round(pooled), rtol=0.0, atol=1e-10):
+        lower = int(np.floor(pooled.min()))
+        upper = int(np.ceil(pooled.max()))
+        if upper - lower + 1 <= bins:
+            return np.arange(lower - 0.5, upper + 1.5, 1.0)
+    return np.linspace(float(pooled.min()), float(pooled.max()), int(bins) + 1)
 
 
 def scalar_numeric_properties(records, cfg, excluded=()):

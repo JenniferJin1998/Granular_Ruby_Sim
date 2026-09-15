@@ -75,4 +75,4 @@ FINAL_JOB=$(sbatch --parsable \
 echo "Submitted finalize job: ${FINAL_JOB}"
 
 echo "Final output directory:"
-echo "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/graph_features"
+echo "/scratch/abucsek_root/abucsek0/yfjin/Granular_RubySim_202608/AnalysisResults/periodic_boundaries/2026-08-03/0_graph_and_basic_stats/artifacts/raw_graph_data"

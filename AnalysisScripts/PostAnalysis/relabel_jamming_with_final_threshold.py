@@ -19,19 +19,23 @@ DEFAULT_FINAL_DIR = (
     ANALYSIS_SCRIPTS_DIR.parent
     / "AnalysisResults"
     / "final_load"
-    / "graph_features"
+    / "0_graph_and_basic_stats"
+    / "graph_data"
 )
 DEFAULT_JAMMING_DIR = (
     ANALYSIS_SCRIPTS_DIR.parent
     / "AnalysisResults"
     / "jamming"
-    / "graph_features"
+    / "0_graph_and_basic_stats"
+    / "graph_data"
 )
 DEFAULT_OUT_DIR = (
     ANALYSIS_SCRIPTS_DIR.parent
     / "AnalysisResults"
     / "jamming"
-    / "graph_features_final_threshold"
+    / "2_force_cluster_comparison"
+    / "artifacts"
+    / "graph_data_final_threshold"
 )
 
 
@@ -176,15 +180,40 @@ def save_pickle(obj, path: Path) -> None:
         pickle.dump(obj, handle)
 
 
-def load_final_threshold(final_dir: Path) -> float:
-    info = load_pickle(final_dir / "high_force_threshold_info.pkl")
-    thresholds = info.get("thresholds", {})
-    if "0deg" not in thresholds:
-        raise KeyError(f"Could not find final-state 0deg threshold in {final_dir}")
-    return float(thresholds["0deg"])
+def load_final_threshold(final_dir: Path) -> tuple[float, str]:
+    threshold_path = final_dir / "high_force_threshold_info.pkl"
+    if threshold_path.exists():
+        info = load_pickle(threshold_path)
+        thresholds = info.get("thresholds", {})
+        if "0deg" not in thresholds:
+            raise KeyError(f"Could not find final-state 0deg threshold in {final_dir}")
+        return float(thresholds["0deg"]), str(threshold_path)
+
+    # The graph-construction rule is 2 x the mean normal force in the complete
+    # (wall-inclusive) 0deg reference graphs.  Recomputing it from CSV avoids
+    # requiring a threshold pickle and gives an independently auditable value.
+    edge_path = final_dir / "edge_features.csv"
+    if not edge_path.exists():
+        raise FileNotFoundError(
+            f"Neither {threshold_path.name} nor {edge_path.name} exists in {final_dir}"
+        )
+    edges = pd.read_csv(edge_path, usecols=["geometry", "normal_force", "is_high_force"])
+    reference = edges.loc[edges["geometry"].astype(str) == "0deg"].copy()
+    forces = pd.to_numeric(reference["normal_force"], errors="coerce").dropna()
+    if forces.empty:
+        raise ValueError(f"No finite 0deg normal forces in {edge_path}")
+    threshold = float(2.0 * forces.mean())
+    expected = pd.to_numeric(reference["normal_force"], errors="coerce") >= threshold
+    stored = reference["is_high_force"].fillna(False).astype(bool)
+    if not np.array_equal(expected.to_numpy(), stored.to_numpy()):
+        mismatches = int(np.count_nonzero(expected.to_numpy() != stored.to_numpy()))
+        raise ValueError(
+            f"Recomputed threshold disagrees with {mismatches} stored 0deg edge labels"
+        )
+    return threshold, f"{edge_path} (2 x mean 0deg complete-graph normal force)"
 
 
-def relabel_graph_dict(graph_dict: dict, threshold: float):
+def relabel_graph_dict(graph_dict: dict, threshold: float, threshold_source: str):
     high_force_records = []
     for label, views in graph_dict.items():
         full_graphs = views.get("full", [])
@@ -196,7 +225,7 @@ def relabel_graph_dict(graph_dict: dict, threshold: float):
     threshold_info = {
         "mode": "external_reference[final_load/0deg]",
         "thresholds": {"0deg": threshold},
-        "source": str(DEFAULT_FINAL_DIR),
+        "source": threshold_source,
     }
     return high_force_records, threshold_info
 
@@ -226,13 +255,13 @@ def copy_context_files(src_dir: Path, out_dir: Path) -> None:
             shutil.copy2(src, out_dir / name)
 
 
-def write_readme(out_dir: Path, final_dir: Path, jamming_dir: Path, threshold: float) -> None:
+def write_readme(out_dir: Path, threshold_source: str, jamming_dir: Path, threshold: float) -> None:
     text = f"""# Jamming state with final-load high-force threshold
 
 This folder was generated from:
 
 - Jamming source: `{jamming_dir}`
-- Final-load threshold source: `{final_dir / "high_force_threshold_info.pkl"}`
+- Final-load threshold source: `{threshold_source}`
 
 High-force contacts were relabeled using the final-load `0deg` threshold:
 
@@ -264,9 +293,9 @@ def main() -> None:
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    threshold = load_final_threshold(final_dir)
+    threshold, threshold_source = load_final_threshold(final_dir)
     graph_dict = load_pickle(jamming_dir / "graph_dict_labeled.pkl")
-    high_force_records, threshold_info = relabel_graph_dict(graph_dict, threshold)
+    high_force_records, threshold_info = relabel_graph_dict(graph_dict, threshold, threshold_source)
 
     save_pickle(graph_dict, out_dir / "graph_dict_labeled.pkl")
     save_pickle(threshold_info, out_dir / "high_force_threshold_info.pkl")
@@ -276,7 +305,7 @@ def main() -> None:
     )
     write_feature_tables(graph_dict, out_dir)
     copy_context_files(jamming_dir, out_dir)
-    write_readme(out_dir, final_dir, jamming_dir, threshold)
+    write_readme(out_dir, threshold_source, jamming_dir, threshold)
 
     print(f"Wrote corrected jamming outputs to: {out_dir}")
     print(f"Final-load threshold applied: {threshold}")

@@ -29,12 +29,16 @@ def estimate_geometry(graph_dict, cfg):
                              seam_contacts=int(seam.sum()),seam_box_estimate=seam_L,range_box_estimate=range_L))
     detail=pd.DataFrame(rows)
     summary=[]
+    configured_axes=cfg.get("periodic_axes")
+    configured_axes=set(map(int,configured_axes)) if isinstance(configured_axes,list) else None
+    configured_lengths={int(k):float(v) for k,v in (cfg.get("box_lengths") or {}).items()}
     for axis,g in detail.groupby("axis"):
         has_seams=(g.seam_contacts>0).mean()>=.8
         vals=g.loc[g.seam_contacts>0,"seam_box_estimate"] if has_seams else g.range_box_estimate
-        summary.append(dict(axis=int(axis),axis_name="xyz"[axis],periodic=bool(has_seams),box_length=float(vals.median()),
+        explicit=axis in configured_lengths
+        summary.append(dict(axis=int(axis),axis_name="xyz"[axis],periodic=bool(axis in configured_axes) if configured_axes is not None else bool(has_seams),box_length=configured_lengths[axis] if explicit else float(vals.median()),
                             box_length_mean=float(vals.mean()),box_length_std=float(vals.std(ddof=1)),n_simulations=len(g),
-                            method="seam_contacts" if has_seams else "coordinate_extent_plus_contact_distance"))
+                            method="config_explicit" if explicit else "seam_contacts" if has_seams else "coordinate_extent_plus_contact_distance"))
     return detail,pd.DataFrame(summary)
 
 
@@ -60,7 +64,8 @@ def main():
             if view=="core" and wall_nodes: issues.append(dict(angle=angle,simulation_id=sim,issue="core_contains_wall_nodes"))
     detail,geometry=estimate_geometry(graphs,cfg)
     out=root/"job0_metadata"; atomic_csv(out/"graph_metadata.csv",pd.DataFrame(metadata)); atomic_csv(out/"property_inventory.csv",pd.DataFrame(properties).drop_duplicates()); atomic_csv(out/"validation_issues.csv",pd.DataFrame(issues,columns=["angle","simulation_id","issue"])); atomic_csv(out/"geometry_estimates_by_simulation.csv",detail); atomic_csv(out/"geometry_estimate.csv",geometry)
-    geo={"box_lengths":{str(r.axis):r.box_length for r in geometry.itertuples()},"periodic_axes":[int(r.axis) for r in geometry.itertuples() if r.periodic],"source":"estimated_from_particle_positions_and_contacts","orthogonal_assumption":True}
+    has_explicit_geometry=bool((geometry.method=="config_explicit").any())
+    geo={"box_lengths":{str(r.axis):r.box_length for r in geometry.itertuples()},"periodic_axes":[int(r.axis) for r in geometry.itertuples() if r.periodic],"source":"config_explicit_with_remaining_axes_estimated" if has_explicit_geometry else "estimated_from_particle_positions_and_contacts","orthogonal_assumption":True}
     atomic_json(out/"geometry_estimate.json",geo)
     import scipy,networkx,matplotlib
     atomic_json(out/"environment.json",{"python":sys.version,"numpy":np.__version__,"pandas":pd.__version__,"scipy":scipy.__version__,"networkx":networkx.__version__,"matplotlib":matplotlib.__version__})
