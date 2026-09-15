@@ -3,7 +3,7 @@
   "random_seed": 20260915,
   "sweep": {
     "start": 0.0,
-    "stop": 3.5,
+    "stop": 5.0,
     "step": 0.1,
     "decimals": 1
   },

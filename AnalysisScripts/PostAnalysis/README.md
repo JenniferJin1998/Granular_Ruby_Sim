@@ -14,7 +14,7 @@
   `3_force_threshold_percolation/` folder and combined comparisons under
   `AnalysisResults/cross_state/3_force_threshold_percolation/`.
 - `force_threshold_percolation_config.json` records the sweep (`n=0.0` through
-  `3.5` by `0.1`), graph inputs, wall labels, and exact periodic lengths.
+  `5.0` by `0.1`), graph inputs, wall labels, and exact periodic lengths.
 
 Submit the 80 worker tasks and dependent summary job with:
 

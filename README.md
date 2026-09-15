@@ -72,7 +72,7 @@ geometries exist).
 The force-threshold percolation workflow for final load and periodic data uses
 the per-simulation criterion
 `normal_force >= n * mean_particle_particle_normal_force` and sweeps
-`n=0.0, 0.1, ..., 3.5`. Its primary critical `n` is the last sampled threshold
+`n=0.0, 0.1, ..., 5.0`. Its primary critical `n` is the last sampled threshold
 whose largest strong cluster still spans between the physical bottom- and
 top-wall contact sets. Periodic x/y contacts use exact minimum-image geometry;
 spanning is assessed along nonperiodic z. The workflow also retains alternate

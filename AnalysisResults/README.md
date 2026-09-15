@@ -45,7 +45,7 @@ Status below reflects the completed 2026-09-15 regeneration.
 
 ## Force-threshold percolation
 
-The paper-inspired analysis in section 3 sweeps `n = 0.0, 0.1, ..., 3.5`
+The paper-inspired analysis in section 3 sweeps `n = 0.0, 0.1, ..., 5.0`
 separately for every 0deg and 30deg simulation. Its mean force uses only
 particle-particle contacts from that simulation. The primary critical value is
 the largest sampled `n` whose largest strong cluster still connects particles
