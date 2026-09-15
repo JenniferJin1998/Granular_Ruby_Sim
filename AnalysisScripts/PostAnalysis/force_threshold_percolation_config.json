@@ -1,0 +1,39 @@
+{
+  "project_root": null,
+  "random_seed": 20260915,
+  "sweep": {
+    "start": 0.0,
+    "stop": 3.5,
+    "step": 0.1,
+    "decimals": 1
+  },
+  "betweenness_samples": 64,
+  "shortest_path_samples": 64,
+  "datasets": {
+    "final_load": {
+      "label": "Final load (container walls)",
+      "short_label": "Final load",
+      "graph_pickle": "AnalysisResults/final_load/0_graph_and_basic_stats/graph_data/graph_dict_labeled.pkl",
+      "output_root": "AnalysisResults/final_load/3_force_threshold_percolation",
+      "angles": ["0deg", "30deg"],
+      "simulations_per_angle": 20,
+      "periodic_axes": [],
+      "box_lengths": {},
+      "bottom_wall_labels": [-2],
+      "top_wall_labels": [-3, -4]
+    },
+    "periodic_boundaries": {
+      "label": "Periodic x/y boundaries",
+      "short_label": "Periodic",
+      "graph_pickle": "AnalysisResults/periodic_boundaries/2026-08-03/0_graph_and_basic_stats/graph_data/graph_dict_labeled.pkl",
+      "output_root": "AnalysisResults/periodic_boundaries/2026-08-03/3_force_threshold_percolation",
+      "angles": ["0deg", "30deg"],
+      "simulations_per_angle": 20,
+      "periodic_axes": [0, 1],
+      "box_lengths": {"0": 0.0018, "1": 0.003},
+      "bottom_wall_labels": [-1, -2, -3],
+      "top_wall_labels": [-4, -5]
+    }
+  },
+  "combined_output_root": "AnalysisResults/cross_state/3_force_threshold_percolation"
+}

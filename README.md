@@ -69,6 +69,16 @@ original top/bottom/side-wall reference. Each reference includes signed
 geometry-minus-0 comparisons (`15°-0°`, `30°-0°`, and `45°-0°` where those
 geometries exist).
 
+The force-threshold percolation workflow for final load and periodic data uses
+the per-simulation criterion
+`normal_force >= n * mean_particle_particle_normal_force` and sweeps
+`n=0.0, 0.1, ..., 3.5`. Its primary critical `n` is the last sampled threshold
+whose largest strong cluster still spans between the physical bottom- and
+top-wall contact sets. Periodic x/y contacts use exact minimum-image geometry;
+spanning is assessed along nonperiodic z. The workflow also retains alternate
+paper-motivated indicators such as the diameter peak, cluster-count peak,
+degree near two, and exact widest-path threshold.
+
 ## Current entry points
 
 Generate periodic-boundary graph features with the staged pipeline:
@@ -91,6 +101,13 @@ graph:
 python AnalysisScripts/PostAnalysis/relabel_particle_contact_threshold.py \
   --input-dir <canonical_graph_directory> \
   --output-dir <force_split2_graph_directory>
+```
+
+Submit the final-load and periodic force-threshold sweeps plus their dependent
+summary job:
+
+```bash
+bash AnalysisScripts/jobs/submit_force_threshold_percolation.sh
 ```
 
 The primary graph view retains actual particle nodes and particle-particle contacts. Wall placeholders and wall-contact edges remain in the full graph where generated, but primary property analysis uses the particle-only core graph unless an output explicitly says `with_walls`.
