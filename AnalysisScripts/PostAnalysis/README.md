@@ -26,3 +26,27 @@ The strong network contains particle-particle contacts only, and its threshold
 uses the mean particle-particle normal force of the same simulation. The main
 selected `n` is the last sampled value for which the largest cluster spans from
 the bottom-wall contact set to the top-wall contact set.
+
+## Crystal-reference networks
+
+- `crystal_reference_networks.py` converts the existing deterministic
+  SC/BCC/FCC/HCP bond-order references into full contact graphs, adds periodic
+  x/y geometry and top/bottom boundary labels, calculates the same graph
+  feature families as the periodic Ruby pipeline, and produces crystal-only
+  and Ruby-versus-crystal property comparisons.
+- `crystal_reference_config.json` records the particle diameter, contact rule,
+  structures, boundary labels, input Ruby tables, and output root.
+- `plot_crystal_reference_geometry.py` renders each full crystal as x/y/z
+  projections plus a 3D perspective, and documents its primitive unit cell,
+  lattice vectors, basis, and particle-center equation.
+
+Submit the restartable overnight graph-property arrays and dependent finalizer
+with:
+
+```bash
+bash AnalysisScripts/jobs/submit_crystal_reference_networks.sh
+```
+
+The results use `AnalysisResults/crystal_references/` with numbered sections
+0, 1, and 3. Section 2 is omitted because the ideal structures have no force
+field and therefore no high-force or force-cluster population.

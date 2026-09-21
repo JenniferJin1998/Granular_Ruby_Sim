@@ -79,6 +79,14 @@ spanning is assessed along nonperiodic z. The workflow also retains alternate
 paper-motivated indicators such as the diameter peak, cluster-count peak,
 degree near two, and exact widest-path threshold.
 
+Ideal SC, BCC, FCC, and HCP references can also be treated as complete contact
+networks rather than only bond-order benchmarks. These graphs use the Ruby
+particle diameter, approximately 1,500–1,600 particles, periodic x/y contacts,
+and top/bottom z-surface labels. Their numbered result layout contains graph
+construction, whole-network property analysis, and comparison against periodic
+Ruby 0°/30°; force-cluster analysis is omitted because ideal lattices do not
+define contact forces or particle stresses.
+
 ## Current entry points
 
 Generate periodic-boundary graph features with the staged pipeline:
@@ -108,6 +116,12 @@ summary job:
 
 ```bash
 bash AnalysisScripts/jobs/submit_force_threshold_percolation.sh
+```
+
+Submit the overnight crystal-reference graph analysis:
+
+```bash
+bash AnalysisScripts/jobs/submit_crystal_reference_networks.sh
 ```
 
 The primary graph view retains actual particle nodes and particle-particle contacts. Wall placeholders and wall-contact edges remain in the full graph where generated, but primary property analysis uses the particle-only core graph unless an output explicitly says `with_walls`.

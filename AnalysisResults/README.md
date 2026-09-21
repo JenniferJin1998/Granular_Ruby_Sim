@@ -42,6 +42,22 @@ Status below reflects the completed 2026-09-15 regeneration.
 | `jamming/` | CSV-reconstructed/validated graph, bond order, bivariate property plots, all four boundary references, and complete-graph final-threshold high/non-high tables populated. Jamming deliberately retains the final-load split-1 threshold; it selects no jamming high-force contacts, so connected force clusters are absent by definition. |
 | `periodic_boundaries/2026-08-03/` | Corrected graph, properties, bond order, all three z-surface boundary references, and both force-split high/non-high and connected-cluster analyses populated. Centered-neighborhood Jobs 2/5 are not yet regenerated. |
 | `cross_state/` | Preserved unchanged, as requested. |
+| `crystal_references/` | Ideal SC/BCC/FCC/HCP systems at 0° orientation, with x/y periodicity, physical top/bottom surface labels, full graph features, and comparison to periodic Ruby 0°/30°. Section 2 is intentionally absent because ideal references do not define contact forces. |
+
+The crystal-reference dataset follows a related layout:
+
+```text
+crystal_references/
+├── 0_graph_and_basic_stats/
+├── 1_network_property_comparison/
+└── 3_comparison_with_periodic/
+```
+
+Its SC, BCC, FCC, and HCP systems contain 1,632, 1,584, 1,536, and
+1,512 particles, respectively, all with the periodic Ruby particle diameter
+of `0.00015 m`. Network comparisons use only properties that are physically
+defined for both an ideal geometric lattice and the Ruby contact graphs;
+force and stress properties are excluded.
 
 ## Force-threshold percolation
 
