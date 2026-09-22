@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot full crystal systems and primitive unit cells with center equations."""
+"""Plot full crystal systems, primitive cells, and recognizable conventional cells."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 import numpy as np
@@ -287,6 +288,162 @@ def plot_unit_cell(spec: dict, diameter: float, output: Path) -> None:
     plt.close(fig)
 
 
+def conventional_cell_data(structure: str, diameter: float) -> dict:
+    """Return a visually familiar conventional-cell frame and particle centers."""
+    d = float(diameter)
+    if structure in {"SC", "BCC", "FCC"}:
+        if structure == "SC":
+            side = d
+        elif structure == "BCC":
+            side = 2 * d / np.sqrt(3)
+        else:
+            side = np.sqrt(2) * d
+        fractional_vertices = np.asarray(list(itertools.product((0, 1), repeat=3)), float)
+        frame = side * fractional_vertices
+        frame_edges = []
+        for i, left in enumerate(fractional_vertices):
+            for j in range(i + 1, len(fractional_vertices)):
+                if np.sum(np.abs(left - fractional_vertices[j])) == 1:
+                    frame_edges.append((i, j))
+        centers = [*frame]
+        labels = ["Corner"] * len(frame)
+        if structure == "BCC":
+            centers.append(np.asarray([side / 2, side / 2, side / 2]))
+            labels.append("Body center")
+            note = "Cubic conventional cell: 8 corners + 1 body center (2 effective particles)"
+        elif structure == "FCC":
+            centers.extend(
+                np.asarray(
+                    [
+                        [0, side / 2, side / 2], [side, side / 2, side / 2],
+                        [side / 2, 0, side / 2], [side / 2, side, side / 2],
+                        [side / 2, side / 2, 0], [side / 2, side / 2, side],
+                    ]
+                )
+            )
+            labels.extend(["Face center"] * 6)
+            note = "Cubic conventional cell: 8 corners + 6 face centers (4 effective particles)"
+        else:
+            note = "Simple-cubic conventional cell: 8 corners (1 effective particle)"
+        return {
+            "frame": frame,
+            "frame_edges": frame_edges,
+            "centers": np.asarray(centers, float),
+            "labels": np.asarray(labels),
+            "note": note,
+        }
+
+    if structure != "HCP":
+        raise ValueError(structure)
+    a = d
+    c = np.sqrt(8 / 3) * d
+    angles = np.deg2rad(np.arange(0, 360, 60))
+    ring = np.column_stack((a * np.cos(angles), a * np.sin(angles)))
+    bottom = np.column_stack((ring, np.zeros(6)))
+    top = np.column_stack((ring, np.full(6, c)))
+    frame = np.vstack((bottom, top))
+    frame_edges = []
+    for idx in range(6):
+        frame_edges.extend(
+            [
+                (idx, (idx + 1) % 6),
+                (idx + 6, ((idx + 1) % 6) + 6),
+                (idx, idx + 6),
+            ]
+        )
+    centers = [*bottom, *top, np.asarray([0.0, 0.0, 0.0]), np.asarray([0.0, 0.0, c])]
+    labels = ["A-layer corner"] * 12 + ["A-layer center"] * 2
+    middle_angles = np.deg2rad([30, 150, 270])
+    middle_radius = a / np.sqrt(3)
+    middle = np.column_stack(
+        (
+            middle_radius * np.cos(middle_angles),
+            middle_radius * np.sin(middle_angles),
+            np.full(3, c / 2),
+        )
+    )
+    centers.extend(middle)
+    labels.extend(["B-layer center"] * 3)
+    return {
+        "frame": frame,
+        "frame_edges": frame_edges,
+        "centers": np.asarray(centers, float),
+        "labels": np.asarray(labels),
+        "note": "Hexagonal conventional cell: A-B-A stacking (6 effective particles; primitive basis has 2)",
+    }
+
+
+def plot_conventional_cell(structure: str, diameter: float, output: Path) -> None:
+    data = conventional_cell_data(structure, diameter)
+    frame = data["frame"]
+    centers = data["centers"]
+    frame_segments = [np.vstack((frame[i], frame[j])) for i, j in data["frame_edges"]]
+    contacts = []
+    for i in range(len(centers)):
+        for j in range(i + 1, len(centers)):
+            distance = np.linalg.norm(centers[j] - centers[i])
+            if np.isclose(distance, diameter, rtol=0.03, atol=diameter * 0.01):
+                contacts.append(np.vstack((centers[i], centers[j])))
+    palette = {
+        "Corner": "#D62728",
+        "Body center": "#2CA02C",
+        "Face center": "#9467BD",
+        "A-layer corner": "#D62728",
+        "A-layer center": "#FF7F0E",
+        "B-layer center": "#2CA02C",
+    }
+    mins = np.minimum(frame.min(axis=0), centers.min(axis=0))
+    maxs = np.maximum(frame.max(axis=0), centers.max(axis=0))
+    spans = np.maximum(maxs - mins, diameter * 0.2)
+    fig = plt.figure(figsize=(11.5, 5.8))
+    padding = spans * 0.08
+    axis = fig.add_subplot(1, 2, 1, projection="3d")
+    axis.add_collection3d(Line3DCollection(frame_segments, colors="#222222", linewidths=1.5, alpha=0.9))
+    if contacts:
+        axis.add_collection3d(Line3DCollection(contacts, colors="#7A9CC6", linewidths=1.4, alpha=0.62))
+    for label in dict.fromkeys(data["labels"]):
+        mask = data["labels"] == label
+        axis.scatter(
+            centers[mask, 0], centers[mask, 1], centers[mask, 2],
+            s=125, color=palette[label], edgecolor="white", linewidth=0.8,
+            label=label, depthshade=False,
+        )
+    axis.set(
+        xlim=(mins[0] - padding[0], maxs[0] + padding[0]),
+        ylim=(mins[1] - padding[1], maxs[1] + padding[1]),
+        zlim=(mins[2] - padding[2], maxs[2] + padding[2]),
+        title="Perspective",
+    )
+    axis.set_box_aspect(spans)
+    axis.view_init(elev=22, azim=-52)
+    axis.set_proj_type("persp")
+    axis.set_axis_off()
+    axis.legend(frameon=False, loc="upper left")
+
+    projection = fig.add_subplot(1, 2, 2)
+    projection.add_collection(LineCollection([segment[:, :2] for segment in frame_segments], colors="#222222", linewidths=1.5, alpha=0.9))
+    if contacts:
+        projection.add_collection(LineCollection([segment[:, :2] for segment in contacts], colors="#7A9CC6", linewidths=1.4, alpha=0.62))
+    for label in dict.fromkeys(data["labels"]):
+        mask = data["labels"] == label
+        projection.scatter(
+            centers[mask, 0], centers[mask, 1], s=125, color=palette[label],
+            edgecolor="white", linewidth=0.8, zorder=3,
+        )
+    projection.set(
+        xlim=(mins[0] - padding[0], maxs[0] + padding[0]),
+        ylim=(mins[1] - padding[1], maxs[1] + padding[1]),
+        title="Projection along z",
+        aspect="equal",
+    )
+    projection.set_axis_off()
+    fig.suptitle(f"{structure}: recognizable conventional cell\n{data['note']}")
+    fig.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.86, wspace=0.02)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
 def write_equation_files(specs: list[dict], diameter: float, output_root: Path) -> None:
     rows = []
     markdown = [
@@ -334,7 +491,9 @@ def write_equation_files(specs: list[dict], diameter: float, output_root: Path) 
         "`system_views/` contains the full approximately 1,500-particle system in "
         "x/y/z projections and 3D perspective. `unit_cells/` contains the primitive "
         "unit cell, lattice vectors, basis centers, and particle-center equation for "
-        "SC, BCC, FCC, and HCP.\n"
+        "SC, BCC, FCC, and HCP. `conventional_cells/` contains the more familiar "
+        "cubic SC/BCC/FCC cells and the hexagonal HCP cell, including body-, face-, "
+        "and layer-center particles.\n"
     )
 
 
@@ -361,8 +520,16 @@ def main() -> None:
             diameter,
             output_root / "unit_cells" / f"{structure}_primitive_unit_and_equations.png",
         )
+        plot_conventional_cell(
+            structure,
+            diameter,
+            output_root / "conventional_cells" / f"{structure}_recognizable_conventional_cell.png",
+        )
     write_equation_files(specs, diameter, output_root)
-    print(f"Created {len(cfg['structures'])} system views and {len(specs)} primitive-cell figures in {output_root}")
+    print(
+        f"Created {len(cfg['structures'])} system views, {len(specs)} primitive-cell figures, "
+        f"and {len(specs)} conventional-cell figures in {output_root}"
+    )
 
 
 if __name__ == "__main__":

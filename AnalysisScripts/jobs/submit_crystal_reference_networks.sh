@@ -25,7 +25,7 @@ record_job topology "${TOPOLOGY}"
 
 LOOP=$(CRYSTAL_PROPERTY=loop sbatch --parsable \
   --dependency="afterok:${BUILD}" --job-name=crystal_loop \
-  --array=0-3%4 --cpus-per-task=4 --mem=32gb --time=20:00:00 \
+  --array=0-3%4 --cpus-per-task=1 --mem=32gb --time=7-00:00:00 \
   AnalysisScripts/jobs/run_crystal_reference_property.slurm)
 record_job loop "${LOOP}"
 

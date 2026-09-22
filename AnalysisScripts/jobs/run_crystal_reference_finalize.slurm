@@ -28,3 +28,7 @@ cd "${PROJECT}"
 python AnalysisScripts/PostAnalysis/crystal_reference_networks.py \
   --config AnalysisScripts/PostAnalysis/crystal_reference_config.json \
   --stage finalize
+python AnalysisScripts/PostAnalysis/plot_crystal_reference_properties.py \
+  --config AnalysisScripts/PostAnalysis/crystal_reference_config.json
+python AnalysisScripts/PostAnalysis/plot_crystal_reference_geometry.py \
+  --config AnalysisScripts/PostAnalysis/crystal_reference_config.json

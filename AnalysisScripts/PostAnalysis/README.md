@@ -38,13 +38,24 @@ the bottom-wall contact set to the top-wall contact set.
   structures, boundary labels, input Ruby tables, and output root.
 - `plot_crystal_reference_geometry.py` renders each full crystal as x/y/z
   projections plus a 3D perspective, and documents its primitive unit cell,
-  lattice vectors, basis, and particle-center equation.
+  lattice vectors, basis, particle-center equation, and familiar conventional
+  cubic/hexagonal cell.
+- `plot_crystal_reference_properties.py` adds four-panel shared-bin
+  distributions, pooled node/contact boxplots, whole-graph bar charts, and
+  standardized property-mean heatmaps to the finalizer's overlay plots.
 
 Submit the restartable overnight graph-property arrays and dependent finalizer
 with:
 
 ```bash
 bash AnalysisScripts/jobs/submit_crystal_reference_networks.sh
+```
+
+If only the long-running BCC/FCC/HCP minimum-cycle-basis patches are missing,
+resume those three jobs and chain the finalizer with:
+
+```bash
+bash AnalysisScripts/jobs/submit_crystal_reference_resume.sh
 ```
 
 The results use `AnalysisResults/crystal_references/` with numbered sections
