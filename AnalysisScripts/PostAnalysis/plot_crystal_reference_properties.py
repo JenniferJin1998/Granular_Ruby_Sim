@@ -48,6 +48,12 @@ GRAPH_PROPERTIES = [
     "mean_local_q4", "mean_local_q6", "mean_local_q8", "mean_local_q10",
     "mean_local_q12",
 ]
+BOUNDARY_REFERENCES = {
+    "all": "top_bottom",
+    "top": "top_only",
+    "bottom": "bottom_only",
+}
+BOUNDARY_LAYERS = (0, 1, 2)
 
 
 def load_config(path: Path) -> dict:
@@ -136,7 +142,7 @@ def plot_distribution_boxplot(
     if not any(len(values) for values in groups):
         return
     fig, axis = plt.subplots(figsize=(7.8, 5.0))
-    artists = axis.boxplot(groups, labels=structures, showmeans=True, showfliers=False, patch_artist=True)
+    artists = axis.boxplot(groups, tick_labels=structures, showmeans=True, showfliers=False, patch_artist=True)
     for box, structure in zip(artists["boxes"], structures):
         box.set_facecolor(STRUCTURE_COLORS[structure])
         box.set_alpha(0.46)
@@ -199,8 +205,225 @@ def plot_standardized_heatmap(table: pd.DataFrame, structures: list[str], domain
     image = axis.imshow(standardized, aspect="auto", cmap="coolwarm", vmin=-1.7, vmax=1.7)
     axis.set_xticks(np.arange(len(structures)), labels=structures)
     axis.set_yticks(np.arange(len(table)), labels=table.property.str.replace("_", " "))
-    axis.set_title(f"Relative {domain}-property means across crystal structures\n(row-wise z score; color compares structures within one property)")
+    for row in range(matrix.shape[0]):
+        for column in range(matrix.shape[1]):
+            value = matrix[row, column]
+            if np.isfinite(value):
+                axis.text(
+                    column, row, format_value(value), ha="center", va="center",
+                    fontsize=6.2, color="white" if abs(standardized[row, column]) > 1.05 else "black",
+                )
+    axis.set_title(
+        f"Relative {domain}-property means across crystal structures\n"
+        "color: row-wise z score; labels: raw property means"
+    )
     fig.colorbar(image, ax=axis, label="Z score among SC/BCC/FCC/HCP")
+    fig.tight_layout()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=220)
+    plt.close(fig)
+
+
+def format_value(value: float) -> str:
+    if not np.isfinite(value):
+        return ""
+    if value == 0:
+        return "0"
+    absolute = abs(value)
+    if 1e-3 <= absolute < 1e4:
+        return f"{value:.3g}"
+    return f"{value:.2e}"
+
+
+def assign_edge_boundary_distance(edges: pd.DataFrame, nodes: pd.DataFrame, reference: str) -> pd.DataFrame:
+    distance_column = f"boundary_distance_{reference}"
+    lookup = nodes[["geometry", "sim_idx", "node_id", distance_column]].copy()
+    lookup["endpoint_key"] = lookup["node_id"].astype(str)
+    endpoint1 = lookup.drop(columns="node_id").rename(
+        columns={"endpoint_key": "node1_key", distance_column: "distance_node1"}
+    )
+    endpoint2 = lookup.drop(columns="node_id").rename(
+        columns={"endpoint_key": "node2_key", distance_column: "distance_node2"}
+    )
+    result = edges.copy()
+    result["node1_key"] = result["node1"].astype(str)
+    result["node2_key"] = result["node2"].astype(str)
+    result = result.merge(endpoint1, on=["geometry", "sim_idx", "node1_key"], how="left")
+    result = result.merge(endpoint2, on=["geometry", "sim_idx", "node2_key"], how="left")
+    result["boundary_distance"] = np.minimum(
+        pd.to_numeric(result["distance_node1"], errors="coerce"),
+        pd.to_numeric(result["distance_node2"], errors="coerce"),
+    )
+    return result.drop(columns=["node1_key", "node2_key", "distance_node1", "distance_node2"])
+
+
+def numerically_uniform(values: np.ndarray) -> bool:
+    if not len(values):
+        return False
+    scale = max(1.0, float(np.max(np.abs(values))))
+    return bool(np.ptp(values) <= 100 * np.finfo(float).eps * scale)
+
+
+def boundary_statistics(
+    nodes: pd.DataFrame,
+    edges: pd.DataFrame,
+    node_properties: list[str],
+    edge_properties: list[str],
+    structures: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    rows = []
+    count_rows = []
+    for reference, output_label in BOUNDARY_REFERENCES.items():
+        node_frame = nodes.copy()
+        node_frame["boundary_distance"] = pd.to_numeric(
+            node_frame[f"boundary_distance_{reference}"], errors="coerce"
+        )
+        edge_frame = assign_edge_boundary_distance(edges, nodes, reference)
+        for domain, frame, properties in (
+            ("node", node_frame, node_properties),
+            ("edge", edge_frame, edge_properties),
+        ):
+            for structure in structures:
+                structure_frame = frame.loc[frame.geometry == structure]
+                for layer in BOUNDARY_LAYERS:
+                    layer_frame = structure_frame.loc[structure_frame.boundary_distance == layer]
+                    count_rows.append(
+                        {
+                            "reference": output_label,
+                            "domain": domain,
+                            "structure": structure,
+                            "layer": layer,
+                            "n": int(len(layer_frame)),
+                        }
+                    )
+                    for property_name in properties:
+                        values = finite(layer_frame[property_name])
+                        rows.append(
+                            {
+                                "reference": output_label,
+                                "domain": domain,
+                                "structure": structure,
+                                "layer": layer,
+                                "property": property_name,
+                                "n": int(len(values)),
+                                "mean": float(np.mean(values)) if len(values) else np.nan,
+                                "median": float(np.median(values)) if len(values) else np.nan,
+                                "std": float(np.std(values, ddof=1)) if len(values) > 1 else np.nan,
+                                "min": float(np.min(values)) if len(values) else np.nan,
+                                "max": float(np.max(values)) if len(values) else np.nan,
+                                "numerically_uniform": numerically_uniform(values),
+                            }
+                        )
+    return pd.DataFrame(rows), pd.DataFrame(count_rows)
+
+
+def row_standardize(matrix: np.ndarray) -> np.ndarray:
+    means = np.nanmean(matrix, axis=1, keepdims=True)
+    standard_deviations = np.nanstd(matrix, axis=1, keepdims=True)
+    return np.divide(
+        matrix - means,
+        standard_deviations,
+        out=np.zeros_like(matrix),
+        where=standard_deviations > 0,
+    )
+
+
+def plot_boundary_statistic_heatmap(
+    statistics: pd.DataFrame,
+    properties: list[str],
+    structures: list[str],
+    reference: str,
+    domain: str,
+    statistic: str,
+    output: Path,
+) -> None:
+    subset = statistics.loc[
+        (statistics.reference == reference)
+        & (statistics.domain == domain)
+        & (statistics.property.isin(properties))
+    ]
+    columns = [(structure, layer) for structure in structures for layer in BOUNDARY_LAYERS]
+    matrix = np.full((len(properties), len(columns)), np.nan)
+    uniform = np.zeros_like(matrix, dtype=bool)
+    for row, property_name in enumerate(properties):
+        for column, (structure, layer) in enumerate(columns):
+            match = subset.loc[
+                (subset.property == property_name)
+                & (subset.structure == structure)
+                & (subset.layer == layer)
+            ]
+            if not match.empty:
+                matrix[row, column] = float(match.iloc[0][statistic])
+                uniform[row, column] = bool(match.iloc[0].numerically_uniform)
+    if statistic == "std":
+        positive = matrix[np.isfinite(matrix) & (matrix > 0)]
+        floor = max(float(np.min(positive)) * 0.1, 1e-18) if len(positive) else 1e-18
+        color_source = np.log10(np.where(np.isfinite(matrix), np.maximum(matrix, floor), np.nan))
+        color_label = "Row-wise z score of log10(std)"
+    else:
+        color_source = matrix
+        color_label = "Row-wise z score of mean"
+    colors = row_standardize(color_source)
+    height = max(6.0, 0.40 * len(properties))
+    fig, axis = plt.subplots(figsize=(16.5, height))
+    image = axis.imshow(colors, aspect="auto", cmap="coolwarm", vmin=-2.0, vmax=2.0)
+    axis.set_xticks(
+        np.arange(len(columns)),
+        labels=[f"{structure}\nd={layer}" for structure, layer in columns],
+    )
+    axis.set_yticks(np.arange(len(properties)), labels=[item.replace("_", " ") for item in properties])
+    for row in range(matrix.shape[0]):
+        for column in range(matrix.shape[1]):
+            value = matrix[row, column]
+            if np.isfinite(value):
+                label = format_value(value) + ("*" if uniform[row, column] else "")
+                axis.text(
+                    column, row, label, ha="center", va="center", fontsize=5.2,
+                    color="white" if abs(colors[row, column]) > 1.15 else "black",
+                )
+    boundary_title = {
+        "top_bottom": "combined top+bottom",
+        "top_only": "top only",
+        "bottom_only": "bottom only",
+    }[reference]
+    axis.set_title(
+        f"{domain.capitalize()} property {statistic} by distance from {boundary_title}\n"
+        "cell labels are raw values; * means numerically uniform within that layer"
+    )
+    fig.colorbar(image, ax=axis, label=color_label)
+    fig.tight_layout()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=230)
+    plt.close(fig)
+
+
+def plot_boundary_count_heatmap(
+    counts: pd.DataFrame,
+    structures: list[str],
+    reference: str,
+    domain: str,
+    output: Path,
+) -> None:
+    subset = counts.loc[(counts.reference == reference) & (counts.domain == domain)]
+    matrix = np.zeros((len(structures), len(BOUNDARY_LAYERS)), dtype=float)
+    for row, structure in enumerate(structures):
+        for column, layer in enumerate(BOUNDARY_LAYERS):
+            match = subset.loc[(subset.structure == structure) & (subset.layer == layer), "n"]
+            matrix[row, column] = float(match.iloc[0]) if len(match) else 0
+    fig, axis = plt.subplots(figsize=(6.2, 4.2))
+    image = axis.imshow(matrix, aspect="auto", cmap="Blues")
+    axis.set_xticks(np.arange(len(BOUNDARY_LAYERS)), labels=[f"distance {layer}" for layer in BOUNDARY_LAYERS])
+    axis.set_yticks(np.arange(len(structures)), labels=structures)
+    for row in range(matrix.shape[0]):
+        for column in range(matrix.shape[1]):
+            axis.text(column, row, f"{int(matrix[row, column]):,}", ha="center", va="center")
+    boundary_title = {
+        "top_bottom": "combined top+bottom",
+        "top_only": "top only",
+        "bottom_only": "bottom only",
+    }[reference]
+    axis.set_title(f"Number of {domain}s by distance from {boundary_title}")
+    fig.colorbar(image, ax=axis, label=f"Number of {domain}s")
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=220)
@@ -269,18 +492,59 @@ def main() -> None:
         result_root / "summary_heatmaps" / "graph_property_values_zscore.png",
     )
 
+    boundary_stats, boundary_counts = boundary_statistics(
+        nodes, edges, node_properties, edge_properties, structures
+    )
+    for reference in BOUNDARY_REFERENCES.values():
+        for domain, properties in (("node", node_properties), ("edge", edge_properties)):
+            boundary_root = result_root / "boundary_layers" / "heatmaps" / reference
+            plot_boundary_count_heatmap(
+                boundary_counts, structures, reference, domain,
+                boundary_root / f"{domain}_counts_distance_0_1_2.png",
+            )
+            for statistic in ("mean", "std"):
+                plot_boundary_statistic_heatmap(
+                    boundary_stats, properties, structures, reference, domain, statistic,
+                    boundary_root / f"{domain}_property_{statistic}_distance_0_1_2.png",
+                )
+
     table_root = result_root / "tables"
     table_root.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(inventory).to_csv(table_root / "visualized_property_inventory.csv", index=False)
     pd.concat(mean_tables, ignore_index=True).to_csv(table_root / "property_means_by_crystal.csv", index=False)
+    boundary_table_root = result_root / "boundary_layers" / "tables"
+    boundary_table_root.mkdir(parents=True, exist_ok=True)
+    boundary_stats.to_csv(boundary_table_root / "node_edge_property_statistics_distance_0_1_2.csv", index=False)
+    boundary_counts.to_csv(boundary_table_root / "node_edge_counts_distance_0_1_2.csv", index=False)
+    boundary_stats.loc[boundary_stats.layer.isin([1, 2])].to_csv(
+        boundary_table_root / "distance_1_2_standard_deviation_audit.csv", index=False
+    )
+    distance_audit = boundary_stats.loc[boundary_stats.layer.isin([1, 2])].copy()
+    per_structure_uniformity = (
+        distance_audit.groupby(["reference", "domain", "structure", "layer"], as_index=False)
+        .agg(property_cells=("property", "size"), uniform_property_cells=("numerically_uniform", "sum"))
+    )
+    overall_uniformity = (
+        distance_audit.groupby(["reference", "domain", "layer"], as_index=False)
+        .agg(property_cells=("property", "size"), uniform_property_cells=("numerically_uniform", "sum"))
+    )
+    overall_uniformity.insert(2, "structure", "ALL")
+    uniformity_summary = pd.concat([overall_uniformity, per_structure_uniformity], ignore_index=True)
+    uniformity_summary["uniform_fraction"] = (
+        uniformity_summary.uniform_property_cells / uniformity_summary.property_cells
+    )
+    uniformity_summary.to_csv(
+        boundary_table_root / "distance_1_2_uniformity_summary.csv", index=False
+    )
     (result_root / "PROPERTY_VISUALIZATIONS.md").write_text(
         "# Crystal property visualizations\n\n"
         "- `distributions/` contains shared-bin overlays produced by the main finalizer.\n"
         "- `distribution_panels/` shows the same node/contact distributions in four panels with shared x/y limits.\n"
         "- `distribution_boxplots/` compares pooled node/contact values; these boxes are not independent simulation replicates.\n"
         "- `graph_property_bars/` compares the one whole-graph value available for each deterministic crystal.\n"
-        "- `summary_heatmaps/` standardizes each property across SC/BCC/FCC/HCP to emphasize relative differences.\n"
-        "- `boundary_layers/` retains the all-surfaces, top-only, and bottom-only distance analyses.\n"
+        "- `summary_heatmaps/` standardizes each property across SC/BCC/FCC/HCP; color is a row-wise z score and each cell is labeled with the raw mean.\n"
+        "- `boundary_layers/heatmaps/` contains annotated counts, means, and standard deviations for node and edge properties at distances 0, 1, and 2 from combined top+bottom, top-only, and bottom-only boundaries. Edge distance is the minimum endpoint distance. A star marks a numerically uniform layer.\n"
+        "- `boundary_layers/tables/distance_1_2_standard_deviation_audit.csv` provides the exact distance-1/2 variability audit.\n"
         "- `tables/` stores descriptive summaries, plotted-property inventory, and crystal means.\n"
     )
     print(

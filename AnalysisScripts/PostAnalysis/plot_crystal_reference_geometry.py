@@ -30,6 +30,10 @@ VIEWS = (
     (24, -52, "Perspective 3D"),
 )
 
+CONTACT_COLOR = "#1565C0"
+PERIODIC_CONTACT_COLOR = "#C23B73"
+GUIDE_COLOR = "#7F7F7F"
+
 
 def load_config(path: Path) -> dict:
     cfg = json.loads(path.read_text())
@@ -55,26 +59,30 @@ def split_periodic_segment(start: np.ndarray, delta: np.ndarray, lengths: dict[i
     current = start.copy()
     remaining = delta.copy()
     pieces = []
-    for _ in range(3):
+    epsilon = 1e-12
+    for _ in range(4):
         endpoint = current + remaining
         crossings = []
         for axis in (0, 1):
             length = lengths[axis]
-            if endpoint[axis] < 0 and remaining[axis] < 0:
+            if endpoint[axis] < -epsilon and remaining[axis] < 0:
                 crossings.append(((0 - current[axis]) / remaining[axis], axis, length))
-            elif endpoint[axis] > length and remaining[axis] > 0:
+            elif endpoint[axis] > length + epsilon and remaining[axis] > 0:
                 crossings.append(((length - current[axis]) / remaining[axis], axis, 0.0))
-        crossings = [item for item in crossings if 0 < item[0] < 1]
+        # A particle can lie exactly on x=0 or y=0. In that case the crossing
+        # fraction is zero: wrap immediately and do not draw outside the box.
+        crossings = [item for item in crossings if -epsilon <= item[0] < 1 - epsilon]
         if not crossings:
             pieces.append(np.vstack((current, endpoint)))
             break
-        fraction = min(item[0] for item in crossings)
+        fraction = max(0.0, min(item[0] for item in crossings))
         hit = current + fraction * remaining
-        pieces.append(np.vstack((current, hit)))
+        if np.linalg.norm(hit - current) > epsilon:
+            pieces.append(np.vstack((current, hit)))
         remaining = (1 - fraction) * remaining
         current = hit.copy()
         for other_fraction, axis, wrapped in crossings:
-            if np.isclose(other_fraction, fraction):
+            if np.isclose(other_fraction, fraction, atol=epsilon):
                 current[axis] = wrapped
     return pieces
 
@@ -84,29 +92,70 @@ def core_graph(full):
     return full.subgraph(nodes).copy()
 
 
+def rectangular_frame_segments(mins: np.ndarray, maxs: np.ndarray) -> list[np.ndarray]:
+    """Return the 12 edges of an axis-aligned display box."""
+    fractions = np.asarray(list(itertools.product((0, 1), repeat=3)), float)
+    corners = mins + fractions * (maxs - mins)
+    return [
+        np.vstack((corners[i], corners[j]))
+        for i, left in enumerate(fractions)
+        for j in range(i + 1, len(fractions))
+        if np.sum(np.abs(left - fractions[j])) == 1
+    ]
+
+
+def contact_segments(centers: np.ndarray, diameter: float, tolerance: float = 0.08) -> list[np.ndarray]:
+    """Connect only center pairs satisfying the graph's physical contact rule."""
+    segments = []
+    lower = diameter * (1 - tolerance)
+    upper = diameter * (1 + tolerance)
+    for i in range(len(centers)):
+        for j in range(i + 1, len(centers)):
+            distance = float(np.linalg.norm(centers[j] - centers[i]))
+            if lower <= distance <= upper:
+                segments.append(np.vstack((centers[i], centers[j])))
+    return segments
+
+
 def plot_system(graph, structure: str, output: Path) -> None:
     nodes = list(graph)
     xyz = np.asarray([graph.nodes[node]["position"] for node in nodes], float)
     index = {node: idx for idx, node in enumerate(nodes)}
     cell = np.asarray(graph.graph["cell_matrix"], float)
     lengths = {axis: float(cell[axis, axis]) for axis in range(3)}
-    segments = []
-    for u, v in graph.edges():
+    contact_lines = []
+    periodic_contact_lines = []
+    for u, v, data in graph.edges(data=True):
         start = xyz[index[u]]
         delta = minimum_image(xyz[index[v]] - start, lengths)
-        segments.extend(split_periodic_segment(start, delta, lengths))
+        pieces = split_periodic_segment(start, delta, lengths)
+        if data.get("is_periodic_crossing", False):
+            periodic_contact_lines.extend(pieces)
+        else:
+            contact_lines.extend(pieces)
     bottom = np.asarray([bool(graph.nodes[node].get("contacts_bottom_wall", False)) for node in nodes])
     top = np.asarray([bool(graph.nodes[node].get("contacts_top_wall", False)) for node in nodes])
     interior = ~(bottom | top)
     mins = np.array([0.0, 0.0, xyz[:, 2].min()])
     maxs = np.array([lengths[0], lengths[1], xyz[:, 2].max()])
     span = np.maximum(maxs - mins, np.finfo(float).eps)
+    frame_segments = rectangular_frame_segments(mins, maxs)
     fig = plt.figure(figsize=(12, 10))
     axes = [fig.add_subplot(2, 2, idx + 1, projection="3d") for idx in range(4)]
     for axis, (elev, azim, title) in zip(axes, VIEWS):
         axis.add_collection3d(
-            Line3DCollection(segments, colors="#7A9CC6", linewidths=0.28, alpha=0.30, rasterized=True)
+            Line3DCollection(frame_segments, colors=GUIDE_COLOR, linewidths=0.75, alpha=0.65, linestyles="dashed")
         )
+        axis.add_collection3d(
+            Line3DCollection(contact_lines, colors=CONTACT_COLOR, linewidths=0.34, alpha=0.38, rasterized=True)
+        )
+        if periodic_contact_lines:
+            axis.add_collection3d(
+                Line3DCollection(
+                    periodic_contact_lines, colors=PERIODIC_CONTACT_COLOR,
+                    linewidths=0.72, alpha=0.82, rasterized=True,
+                )
+            )
         axis.scatter(xyz[interior, 0], xyz[interior, 1], xyz[interior, 2], s=2.6, color="#6B6B6B", alpha=0.55, depthshade=False, rasterized=True)
         axis.scatter(xyz[bottom, 0], xyz[bottom, 1], xyz[bottom, 2], s=7, color="#1F77B4", alpha=0.95, depthshade=False, rasterized=True)
         axis.scatter(xyz[top, 0], xyz[top, 1], xyz[top, 2], s=7, color="#FF7F0E", alpha=0.95, depthshade=False, rasterized=True)
@@ -118,6 +167,9 @@ def plot_system(graph, structure: str, output: Path) -> None:
     fig.suptitle(f"{structure} crystal reference — full system, 0° orientation, periodic x/y")
     fig.legend(
         handles=[
+            Line2D([0], [0], color=CONTACT_COLOR, linewidth=2.0, label="Actual particle contact"),
+            Line2D([0], [0], color=PERIODIC_CONTACT_COLOR, linewidth=2.0, label="Periodic x/y contact"),
+            Line2D([0], [0], color=GUIDE_COLOR, linestyle="--", linewidth=1.2, label="Simulation-box guide"),
             Line2D([0], [0], marker="o", linestyle="", color="#6B6B6B", label="Interior particle"),
             Line2D([0], [0], marker="o", linestyle="", color="#1F77B4", label="Bottom-surface particle"),
             Line2D([0], [0], marker="o", linestyle="", color="#FF7F0E", label="Top-surface particle"),
@@ -228,18 +280,16 @@ def plot_unit_cell(spec: dict, diameter: float, output: Path) -> None:
     vertices, edge_pairs = cell_vertices(vectors)
     centers, basis_ids = displayed_basis_points(vectors, basis)
     segments = [np.vstack((vertices[i], vertices[j])) for i, j in edge_pairs]
-    # Contact-sized segments among displayed centers make the local coordination
-    # visible without treating the gray cell frame as a contact network.
-    contacts = []
-    for i in range(len(centers)):
-        for j in range(i + 1, len(centers)):
-            if np.isclose(np.linalg.norm(centers[j] - centers[i]), diameter, rtol=0.03, atol=diameter * 0.01):
-                contacts.append(np.vstack((centers[i], centers[j])))
+    # Use the same distance rule as the graph builder. The dashed cell frame is
+    # a geometric guide; only solid blue segments are graph/contact edges.
+    contacts = contact_segments(centers, diameter)
     fig = plt.figure(figsize=(12, 6.2))
     axis = fig.add_subplot(1, 2, 1, projection="3d")
-    axis.add_collection3d(Line3DCollection(segments, colors="#333333", linewidths=1.3, alpha=0.85))
+    axis.add_collection3d(
+        Line3DCollection(segments, colors=GUIDE_COLOR, linewidths=1.0, alpha=0.62, linestyles="dashed")
+    )
     if contacts:
-        axis.add_collection3d(Line3DCollection(contacts, colors="#4C78A8", linewidths=1.8, alpha=0.72))
+        axis.add_collection3d(Line3DCollection(contacts, colors=CONTACT_COLOR, linewidths=2.35, alpha=0.95))
     palette = ["#D62728", "#2CA02C"]
     for basis_id in sorted(set(basis_ids)):
         mask = basis_ids == basis_id
@@ -261,7 +311,16 @@ def plot_unit_cell(spec: dict, diameter: float, output: Path) -> None:
     axis.set_xlabel("x (m)")
     axis.set_ylabel("y (m)")
     axis.set_zlabel("z (m)")
-    axis.legend(frameon=False)
+    handles, labels = axis.get_legend_handles_labels()
+    axis.legend(
+        [
+            Line2D([0], [0], color=CONTACT_COLOR, linewidth=2.4, label="Actual contact (distance ≈ d)"),
+            Line2D([0], [0], color=GUIDE_COLOR, linestyle="--", linewidth=1.2, label="Cell-frame guide"),
+            *handles,
+        ],
+        ["Actual contact (distance ≈ d)", "Cell-frame guide", *labels],
+        frameon=False,
+    )
     text_axis = fig.add_subplot(1, 2, 2)
     text_axis.axis("off")
     general = r"$r_{n_1n_2n_3,s}=n_1a_1+n_2a_2+n_3a_3+b_s$"
@@ -378,12 +437,7 @@ def plot_conventional_cell(structure: str, diameter: float, output: Path) -> Non
     frame = data["frame"]
     centers = data["centers"]
     frame_segments = [np.vstack((frame[i], frame[j])) for i, j in data["frame_edges"]]
-    contacts = []
-    for i in range(len(centers)):
-        for j in range(i + 1, len(centers)):
-            distance = np.linalg.norm(centers[j] - centers[i])
-            if np.isclose(distance, diameter, rtol=0.03, atol=diameter * 0.01):
-                contacts.append(np.vstack((centers[i], centers[j])))
+    contacts = contact_segments(centers, diameter)
     palette = {
         "Corner": "#D62728",
         "Body center": "#2CA02C",
@@ -398,9 +452,11 @@ def plot_conventional_cell(structure: str, diameter: float, output: Path) -> Non
     fig = plt.figure(figsize=(11.5, 5.8))
     padding = spans * 0.08
     axis = fig.add_subplot(1, 2, 1, projection="3d")
-    axis.add_collection3d(Line3DCollection(frame_segments, colors="#222222", linewidths=1.5, alpha=0.9))
+    axis.add_collection3d(
+        Line3DCollection(frame_segments, colors=GUIDE_COLOR, linewidths=1.0, alpha=0.62, linestyles="dashed")
+    )
     if contacts:
-        axis.add_collection3d(Line3DCollection(contacts, colors="#7A9CC6", linewidths=1.4, alpha=0.62))
+        axis.add_collection3d(Line3DCollection(contacts, colors=CONTACT_COLOR, linewidths=2.25, alpha=0.95))
     for label in dict.fromkeys(data["labels"]):
         mask = data["labels"] == label
         axis.scatter(
@@ -418,12 +474,32 @@ def plot_conventional_cell(structure: str, diameter: float, output: Path) -> Non
     axis.view_init(elev=22, azim=-52)
     axis.set_proj_type("persp")
     axis.set_axis_off()
-    axis.legend(frameon=False, loc="upper left")
+    handles, labels = axis.get_legend_handles_labels()
+    axis.legend(
+        [
+            Line2D([0], [0], color=CONTACT_COLOR, linewidth=2.4, label="Actual contact (distance ≈ d)"),
+            Line2D([0], [0], color=GUIDE_COLOR, linestyle="--", linewidth=1.2, label="Cell-frame guide"),
+            *handles,
+        ],
+        ["Actual contact (distance ≈ d)", "Cell-frame guide", *labels],
+        frameon=False,
+        loc="upper left",
+    )
 
     projection = fig.add_subplot(1, 2, 2)
-    projection.add_collection(LineCollection([segment[:, :2] for segment in frame_segments], colors="#222222", linewidths=1.5, alpha=0.9))
+    projection.add_collection(
+        LineCollection(
+            [segment[:, :2] for segment in frame_segments], colors=GUIDE_COLOR,
+            linewidths=1.0, alpha=0.62, linestyles="dashed",
+        )
+    )
     if contacts:
-        projection.add_collection(LineCollection([segment[:, :2] for segment in contacts], colors="#7A9CC6", linewidths=1.4, alpha=0.62))
+        projection.add_collection(
+            LineCollection(
+                [segment[:, :2] for segment in contacts], colors=CONTACT_COLOR,
+                linewidths=2.25, alpha=0.95,
+            )
+        )
     for label in dict.fromkeys(data["labels"]):
         mask = data["labels"] == label
         projection.scatter(
@@ -439,6 +515,130 @@ def plot_conventional_cell(structure: str, diameter: float, output: Path) -> Non
     projection.set_axis_off()
     fig.suptitle(f"{structure}: recognizable conventional cell\n{data['note']}")
     fig.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.86, wspace=0.02)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def primitive_cell_data(spec: dict) -> dict:
+    vertices, edge_pairs = cell_vertices(spec["vectors"])
+    centers, basis_ids = displayed_basis_points(spec["vectors"], spec["basis_fractional"])
+    return {
+        "frame": vertices,
+        "frame_edges": edge_pairs,
+        "centers": centers,
+        "labels": np.asarray([f"Basis {basis_id + 1}" for basis_id in basis_ids]),
+        "note": "Primitive cell: smallest translational repeating unit",
+    }
+
+
+def plot_cell_four_views(
+    structure: str,
+    cell_kind: str,
+    data: dict,
+    diameter: float,
+    output: Path,
+) -> None:
+    """Plot true x/y/z projections plus a 3D perspective for one cell."""
+    frame = np.asarray(data["frame"], float)
+    centers = np.asarray(data["centers"], float)
+    labels = np.asarray(data["labels"])
+    frame_segments = [np.vstack((frame[i], frame[j])) for i, j in data["frame_edges"]]
+    contacts = contact_segments(centers, diameter)
+    palette = {
+        "Basis 1": "#D62728",
+        "Basis 2": "#2CA02C",
+        "Corner": "#D62728",
+        "Body center": "#2CA02C",
+        "Face center": "#9467BD",
+        "A-layer corner": "#D62728",
+        "A-layer center": "#FF7F0E",
+        "B-layer center": "#2CA02C",
+    }
+    combined = np.vstack((frame, centers))
+    mins = combined.min(axis=0)
+    maxs = combined.max(axis=0)
+    spans = np.maximum(maxs - mins, diameter * 0.2)
+    padding = spans * 0.08
+    projections = (
+        (1, 2, "Projection along x", "y (m)", "z (m)"),
+        (0, 2, "Projection along y", "x (m)", "z (m)"),
+        (0, 1, "Projection along z", "x (m)", "y (m)"),
+    )
+    fig = plt.figure(figsize=(11.5, 10.0))
+    for panel, (horizontal, vertical, title, xlabel, ylabel) in enumerate(projections, start=1):
+        axis = fig.add_subplot(2, 2, panel)
+        axis.add_collection(
+            LineCollection(
+                [segment[:, [horizontal, vertical]] for segment in frame_segments],
+                colors=GUIDE_COLOR, linewidths=1.0, alpha=0.62, linestyles="dashed",
+            )
+        )
+        if contacts:
+            axis.add_collection(
+                LineCollection(
+                    [segment[:, [horizontal, vertical]] for segment in contacts],
+                    colors=CONTACT_COLOR, linewidths=2.15, alpha=0.95,
+                )
+            )
+        for label in dict.fromkeys(labels):
+            mask = labels == label
+            axis.scatter(
+                centers[mask, horizontal], centers[mask, vertical],
+                s=95, color=palette[label], edgecolor="white", linewidth=0.7, zorder=3,
+            )
+        axis.set(
+            xlim=(mins[horizontal] - padding[horizontal], maxs[horizontal] + padding[horizontal]),
+            ylim=(mins[vertical] - padding[vertical], maxs[vertical] + padding[vertical]),
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            aspect="equal",
+        )
+        axis.grid(alpha=0.13)
+
+    axis = fig.add_subplot(2, 2, 4, projection="3d")
+    axis.add_collection3d(
+        Line3DCollection(
+            frame_segments, colors=GUIDE_COLOR, linewidths=1.0,
+            alpha=0.62, linestyles="dashed",
+        )
+    )
+    if contacts:
+        axis.add_collection3d(
+            Line3DCollection(contacts, colors=CONTACT_COLOR, linewidths=2.15, alpha=0.95)
+        )
+    for label in dict.fromkeys(labels):
+        mask = labels == label
+        axis.scatter(
+            centers[mask, 0], centers[mask, 1], centers[mask, 2],
+            s=95, color=palette[label], edgecolor="white", linewidth=0.7,
+            label=label, depthshade=False,
+        )
+    axis.set(
+        xlim=(mins[0] - padding[0], maxs[0] + padding[0]),
+        ylim=(mins[1] - padding[1], maxs[1] + padding[1]),
+        zlim=(mins[2] - padding[2], maxs[2] + padding[2]),
+        title="Perspective 3D",
+        xlabel="x (m)",
+        ylabel="y (m)",
+        zlabel="z (m)",
+    )
+    axis.set_box_aspect(spans)
+    axis.view_init(elev=22, azim=-52)
+    handles, labels = axis.get_legend_handles_labels()
+    axis.legend(
+        [
+            Line2D([0], [0], color=CONTACT_COLOR, linewidth=2.4, label="Actual contact (distance ≈ d)"),
+            Line2D([0], [0], color=GUIDE_COLOR, linestyle="--", linewidth=1.2, label="Cell-frame guide"),
+            *handles,
+        ],
+        ["Actual contact (distance ≈ d)", "Cell-frame guide", *labels],
+        frameon=False,
+        loc="upper left",
+    )
+    fig.suptitle(f"{structure} {cell_kind} unit cell — four views\n{data['note']}")
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=220, bbox_inches="tight")
     plt.close(fig)
@@ -493,7 +693,8 @@ def write_equation_files(specs: list[dict], diameter: float, output_root: Path) 
         "unit cell, lattice vectors, basis centers, and particle-center equation for "
         "SC, BCC, FCC, and HCP. `conventional_cells/` contains the more familiar "
         "cubic SC/BCC/FCC cells and the hexagonal HCP cell, including body-, face-, "
-        "and layer-center particles.\n"
+        "and layer-center particles. The `four_views/` subfolders show every cell "
+        "along x, y, and z plus a 3D perspective.\n"
     )
 
 
@@ -520,15 +721,30 @@ def main() -> None:
             diameter,
             output_root / "unit_cells" / f"{structure}_primitive_unit_and_equations.png",
         )
+        plot_cell_four_views(
+            structure,
+            "primitive",
+            primitive_cell_data(spec),
+            diameter,
+            output_root / "unit_cells" / "four_views" / f"{structure}_primitive_cell_four_views.png",
+        )
         plot_conventional_cell(
             structure,
             diameter,
             output_root / "conventional_cells" / f"{structure}_recognizable_conventional_cell.png",
         )
+        plot_cell_four_views(
+            structure,
+            "conventional",
+            conventional_cell_data(structure, diameter),
+            diameter,
+            output_root / "conventional_cells" / "four_views" / f"{structure}_conventional_cell_four_views.png",
+        )
     write_equation_files(specs, diameter, output_root)
     print(
         f"Created {len(cfg['structures'])} system views, {len(specs)} primitive-cell figures, "
-        f"and {len(specs)} conventional-cell figures in {output_root}"
+        f"{len(specs)} conventional-cell figures, and {2 * len(specs)} cell four-view figures "
+        f"in {output_root}"
     )
 
 

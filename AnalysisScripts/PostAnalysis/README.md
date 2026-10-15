@@ -39,10 +39,17 @@ the bottom-wall contact set to the top-wall contact set.
 - `plot_crystal_reference_geometry.py` renders each full crystal as x/y/z
   projections plus a 3D perspective, and documents its primitive unit cell,
   lattice vectors, basis, particle-center equation, and familiar conventional
-  cubic/hexagonal cell.
+  cubic/hexagonal cell. Both primitive and conventional cells also receive
+  four-view figures (projections along x/y/z plus a 3D perspective). Solid blue
+  lines are physical particle contacts, magenta lines in full-system views are
+  contacts wrapped through periodic x/y boundaries, and dashed gray lines are
+  cell or simulation-box guides rather than graph edges.
 - `plot_crystal_reference_properties.py` adds four-panel shared-bin
   distributions, pooled node/contact boxplots, whole-graph bar charts, and
-  standardized property-mean heatmaps to the finalizer's overlay plots.
+  annotated standardized property-mean heatmaps to the finalizer's overlay
+  plots. It also produces annotated node/edge count, mean, and standard-
+  deviation heatmaps at graph distances 0, 1, and 2 from combined top+bottom,
+  top-only, and bottom-only boundaries.
 
 Submit the restartable overnight graph-property arrays and dependent finalizer
 with:
