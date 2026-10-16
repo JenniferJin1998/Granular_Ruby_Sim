@@ -27,6 +27,73 @@ uses the mean particle-particle normal force of the same simulation. The main
 selected `n` is the last sampled value for which the largest cluster spans from
 the bottom-wall contact set to the top-wall contact set.
 
+## Final-load force-split-2 particle-only workbook
+
+Run `python AnalysisScripts/PostAnalysis/export_final_load_force_split2_tables.py`
+with pandas and XlsxWriter installed to export particle-only
+populations for all four geometries and all 20 simulations per geometry. The
+workbook is saved under
+`AnalysisResults/final_load/2_force_cluster_comparison/force_split2/final_load_force_split2_populations.xlsx`.
+Its `nodes` sheet contains particle-only force-chain labels, degree, closeness, and
+betweenness. Its `edges` sheet contains high-force labels, normal force, contact
+angle to z in degrees, and both endpoint nodes' labels and centralities. Only
+particle nodes and particle-particle contacts are included. Node force labels
+and high-force degrees are recomputed using only retained contacts, excluding
+wall-contact effects present in the existing stored Job 5 node classification.
+Properties are copied from the complete core graph, rather than recalculated
+on the high-force population. A companion JSON records sources, counts,
+threshold verification, and the distribution plotting conventions.
+
+## Force-threshold property distributions
+
+`force_threshold_property_distributions.py` sweeps `n=0:0.025:4` for final-load
+data. The force cutoff is `n` times the pooled 0-degree particle-particle mean
+normal force, fixed across all geometries and simulations. Wall nodes and wall
+contacts are excluded throughout. A particle is high-force if it is incident
+to at least one selected particle-particle contact. Stored wall-influenced
+node labels are not used.
+
+Run with the existing plotting environment:
+
+```bash
+/home/yfjin/Research/anaconda3/envs/graph_analysis/bin/python \
+  AnalysisScripts/PostAnalysis/force_threshold_property_distributions.py
+```
+
+Results are saved in
+`AnalysisResults/final_load/2_force_cluster_comparison/force_threshold_property_distributions/`:
+
+- `tables/pooled_geometry_group_summaries.csv`: main plotted means and medians,
+  with group counts and fractions for every geometry, threshold, and property.
+- `tables/per_simulation_group_summaries.csv`: the same calculations separately
+  for each simulation, preserving the simulation as the independent replicate.
+- `tables/simulation_balanced_summaries.csv`: equal-weight averages of available
+  simulation means/medians, with the number of nonempty simulation groups.
+- `tables/particle_input_properties.csv`, `particle_contact_input_properties.csv`,
+  and `thresholds.csv`: particle-only input values and numerical force cutoffs.
+- `figures/threshold_curves/`: one four-property figure per geometry and statistic.
+- `figures/geometry_lines/`: high/non-high figures with all thresholds as lines;
+  a shared colorbar identifies `n`, and integer thresholds receive heavier lines.
+- `figures/geometry_threshold_surfaces/`: paired high/non-high surfaces over
+  geometry and threshold, one four-property figure for each statistic.
+- `analysis_manifest.json`: input and script hashes, reference mean, definitions,
+  validation, and figure paths.
+
+All three plot types are generated for means and medians in PDF, PNG, and SVG.
+The plots pool all particle/contact observations within each geometry and force
+group, matching the descriptive distribution convention. Degree, closeness, and
+betweenness are copied from the complete particle-only graph and held fixed;
+only population membership changes. Contact angle to z is an edge property in
+degrees. Empty populations have undefined means/medians and appear as gaps.
+The script validates exhaustive partitions, monotone group sizes, exact particle
+degree against contact incidence, and agreement of pooled summaries with
+count-weighted simulation means. These summaries measure distribution location;
+they do not characterize the entire distribution or provide significance tests.
+
+Options include `--start`, `--stop`, `--step`, `--input-dir`, `--output-root`,
+`--formats`, `--dpi`, and `--tables-only`. Use a separate `--output-root` when
+comparing different sweep configurations. Rerunning overwrites matching outputs.
+
 ## Crystal-reference networks
 
 - `crystal_reference_networks.py` converts the existing deterministic
