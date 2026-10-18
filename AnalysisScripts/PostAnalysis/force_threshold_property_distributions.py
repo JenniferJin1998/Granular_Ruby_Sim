@@ -32,6 +32,7 @@ NODE_PROPERTIES = tuple(name for name in PROPERTIES if name != "angle_with_zz")
 GROUPS = ("high_force", "non_high_force")
 COLORS = {"high_force": "#d95f02", "non_high_force": "#2474b5"}
 LABELS = {"high_force": "High force", "non_high_force": "Non-high force"}
+SELECTED_THRESHOLDS = (0.5, 1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.5)
 
 
 def threshold_grid(start, stop, step):
@@ -172,6 +173,60 @@ def property_axes(axes, statistic):
         axis.grid(alpha=0.2)
 
 
+def selected_geometry_mean_plots(summary, output, thresholds, formats, dpi, reference_mean):
+    selected_frames = []
+    for multiplier in thresholds:
+        selected = summary.loc[np.isclose(summary.n, multiplier, rtol=0, atol=1e-10)].copy()
+        expected = {(geometry, prop, group) for geometry in GEOMETRIES
+                    for prop in PROPERTIES for group in GROUPS}
+        identifiers = ["geometry", "property", "group"]
+        if selected.duplicated(identifiers).any() or set(selected[identifiers].itertuples(index=False, name=None)) != expected:
+            raise ValueError(f"Missing or duplicate summaries for n={multiplier:g}")
+        selected_frames.append(selected)
+    selected = pd.concat(selected_frames, ignore_index=True)
+    table = output / "tables/selected_threshold_geometry_means.csv"
+    table.parent.mkdir(parents=True, exist_ok=True)
+    columns = ["geometry", "n", "force_threshold", "scope", "property", "group",
+               "count", "population_count", "fraction", "mean"]
+    selected[columns].sort_values(["n", "property", "geometry", "group"]).to_csv(table, index=False)
+    geometry_angles = [int(geometry.removesuffix("deg")) for geometry in GEOMETRIES]
+    paths = []
+    for multiplier, frame in zip(thresholds, selected_frames):
+        fig, axes = plt.subplots(2, 2, figsize=(10, 7), layout="constrained")
+        property_axes(axes, "mean")
+        for axis, prop in zip(axes.flat, PROPERTIES):
+            population = "particles" if prop in NODE_PROPERTIES else "contacts"
+            for group in GROUPS:
+                curve = frame.loc[frame.property.eq(prop) & frame.group.eq(group)].set_index("geometry").reindex(GEOMETRIES)
+                axis.plot(geometry_angles, curve["mean"], color=COLORS[group],
+                          marker="o", markersize=4.5, lw=1.6,
+                          label=f"{LABELS[group]} {population}")
+            values = selected.loc[selected.property.eq(prop), "mean"].to_numpy(float)
+            finite_values = values[np.isfinite(values)]
+            if len(finite_values):
+                lower, upper = finite_values.min(), finite_values.max()
+                padding = (upper - lower) * 0.07 or max(abs(lower) * 0.05, 0.01)
+                axis.set_ylim(lower - padding, upper + padding)
+            axis.set_xticks(geometry_angles, [f"{angle}°" for angle in geometry_angles])
+            axis.set_xlabel("Geometry angle (°)")
+            axis.legend(frameon=False)
+        fig.suptitle(f"Final load · n = {multiplier:g} · cutoff = {multiplier * reference_mean:.6g}\n"
+                     "Particle-only populations · pooled means")
+        stem = f"n_{multiplier:.3f}".replace(".", "p")
+        paths.extend(save_figure(fig, output / "figures/geometry_high_vs_non_high/mean" / stem, formats, dpi))
+    source = output / "tables/pooled_geometry_group_summaries.csv"
+    metadata = {"threshold_multipliers": list(thresholds), "reference_mean_normal_force": reference_mean,
+                "aggregation": "Pooled particle/contact means; same definitions as the original sweep",
+                "walls": "Excluded from reference mean, populations, labels, and topology properties",
+                "y_limits": "Shared per property across all selected-threshold figures",
+                "summary_source": str(source.resolve()),
+                "summary_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                "values_table": str(table.resolve()), "figure_files": paths}
+    (output / "selected_threshold_geometry_mean_manifest.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    return paths
+
+
 def make_plots(summary, output, multipliers, formats, dpi):
     paths = []
     geometry_x = np.arange(len(GEOMETRIES))
@@ -245,12 +300,29 @@ def main():
     parser.add_argument("--formats", nargs="+", choices=("png", "pdf", "svg"), default=["png", "pdf", "svg"])
     parser.add_argument("--dpi", type=int, default=220)
     parser.add_argument("--tables-only", action="store_true")
+    parser.add_argument("--selected-only", action="store_true",
+                        help="Render selected-threshold mean comparisons from the saved pooled summaries")
+    parser.add_argument("--selected-thresholds", type=float, nargs="+", default=list(SELECTED_THRESHOLDS))
     args = parser.parse_args()
     multipliers = threshold_grid(args.start, args.stop, args.step)
     if args.dpi < 1:
         parser.error("dpi must be positive")
     matplotlib.rcParams.update({"font.family": "sans-serif", "font.sans-serif": ["Helvetica", "Nimbus Sans", "Arial", "DejaVu Sans"],
                                 "font.size": 10, "svg.fonttype": "none", "pdf.fonttype": 42})
+    if not args.selected_thresholds or not np.isfinite(args.selected_thresholds).all() or min(args.selected_thresholds) < 0:
+        parser.error("selected thresholds must be finite nonnegative multipliers")
+    if len(set(args.selected_thresholds)) != len(args.selected_thresholds):
+        parser.error("selected thresholds must be distinct")
+    if args.selected_only:
+        if args.tables_only:
+            parser.error("selected-only and tables-only cannot be combined")
+        summary_path = args.output_root / "tables/pooled_geometry_group_summaries.csv"
+        metadata = json.loads((args.output_root / "analysis_manifest.json").read_text())
+        figures = selected_geometry_mean_plots(pd.read_csv(summary_path), args.output_root,
+                                              args.selected_thresholds, args.formats, args.dpi,
+                                              metadata["reference_mean_normal_force"])
+        print(f"Saved {len(figures)} selected-threshold figure files to {args.output_root}", flush=True)
+        return
     nodes, edges, reference_mean = particle_inputs(args.input_dir)
     print(f"Particle-only inputs: {len(nodes):,} nodes, {len(edges):,} contacts; reference mean {reference_mean:.16g}", flush=True)
     pooled = population_summaries(nodes, edges, reference_mean, multipliers, False)
@@ -271,6 +343,12 @@ def main():
     pd.DataFrame({"n": multipliers, "force_threshold": multipliers * reference_mean}).to_csv(tables / "thresholds.csv", index=False)
     print(f"Validated and saved {len(pooled):,} pooled and {len(simulations):,} per-simulation rows", flush=True)
     figures = [] if args.tables_only else make_plots(pooled, args.output_root / "figures", multipliers, args.formats, args.dpi)
+    if not args.tables_only:
+        included = [value for value in args.selected_thresholds
+                    if np.isclose(multipliers, value, rtol=0, atol=1e-10).any()]
+        if included:
+            figures.extend(selected_geometry_mean_plots(pooled, args.output_root, included,
+                                                       args.formats, args.dpi, reference_mean))
     sources = {name: {"path": str((args.input_dir / name).resolve()),
                       "sha256": hashlib.sha256((args.input_dir / name).read_bytes()).hexdigest()}
                for name in ("node_features.csv", "edge_features.csv")}

@@ -94,6 +94,22 @@ Options include `--start`, `--stop`, `--step`, `--input-dir`, `--output-root`,
 `--formats`, `--dpi`, and `--tables-only`. Use a separate `--output-root` when
 comparing different sweep configurations. Rerunning overwrites matching outputs.
 
+Selected-threshold comparisons plot geometry angle versus pooled property mean
+with high-force and non-high-force curves together. Defaults are
+`n=0.5,1,1.5,1.75,2,2.25,2.5,2.75,3,3.5`, with one four-property figure per
+threshold and shared property-wise y limits across these figures. They are
+included in a full run. To add or refresh only these figures from saved tables:
+
+```bash
+/home/yfjin/Research/anaconda3/envs/graph_analysis/bin/python \
+  AnalysisScripts/PostAnalysis/force_threshold_property_distributions.py --selected-only
+```
+
+Figures are saved in `figures/geometry_high_vs_non_high/mean/`, plotted values
+in `tables/selected_threshold_geometry_means.csv`, and provenance in
+`selected_threshold_geometry_mean_manifest.json`. Override the selections with
+`--selected-thresholds` followed by multipliers present in the saved sweep.
+
 ## Crystal-reference networks
 
 - `crystal_reference_networks.py` converts the existing deterministic

@@ -36,6 +36,7 @@ Each angle has compatible `forces_collect`, `f_lengths`, `Pos_collect`, and `sig
 | `AnalysisScripts/RunWhole/` | Monolithic graph-generation workflow and feature reference. |
 | `AnalysisScripts/PostAnalysis/` | Comparisons, plotting, boundary-layer, and local-structure analyses. |
 | `AnalysisScripts/PostAnalysis/PeriodicRubyPipeline/` | Restartable neighborhood, bond-order, high-force, and cluster analyses. |
+| `AnalysisScripts/ManuscriptVisualization/` | Reproducible manuscript contact-network figures, with PDF, SVG, and PNG exports. |
 | `AnalysisScripts/OldVersions/` | Historical code retained for provenance; not a current entry point. |
 | `AnalysisScripts/jobs/` | SLURM submission scripts; generated logs and temporary state are ignored. |
 | `AnalysisResults/` | Generated outputs. See its README for the canonical layout and status. |
@@ -79,6 +80,15 @@ spanning is assessed along nonperiodic z. The workflow also retains alternate
 paper-motivated indicators such as the diameter peak, cluster-count peak,
 degree near two, and exact widest-path threshold.
 
+The final-load property-distribution sweep uses a different fixed reference:
+`normal_force >= n * pooled_0deg_particle_particle_mean_normal_force`, with
+`n=0, 0.025, ..., 4`. Wall nodes and contacts are excluded throughout, including
+from node high-force labels. Degree, closeness, and betweenness remain the
+complete particle-only graph values; only group membership changes. Results
+include pooled means/medians, per-simulation summaries, and selected-threshold
+geometry comparisons. The particle-only split-2 workbook follows this same
+labeling convention and matches the sweep at `n=2`.
+
 Ideal SC, BCC, FCC, and HCP references can also be treated as complete contact
 networks rather than only bond-order benchmarks. These graphs use the Ruby
 particle diameter, approximately 1,500–1,600 particles, periodic x/y contacts,
@@ -117,6 +127,34 @@ summary job:
 ```bash
 bash AnalysisScripts/jobs/submit_force_threshold_percolation.sh
 ```
+
+Run the final-load particle-only property sweep and all comparison plots:
+
+```bash
+/home/yfjin/Research/anaconda3/envs/graph_analysis/bin/python \
+  AnalysisScripts/PostAnalysis/force_threshold_property_distributions.py
+```
+
+Use `--selected-only` to regenerate the selected-threshold geometry plots from
+saved summary tables. Outputs are under
+`AnalysisResults/final_load/2_force_cluster_comparison/force_threshold_property_distributions/`.
+
+Export the particle-only split-2 workbook with pandas and XlsxWriter installed:
+
+```bash
+python AnalysisScripts/PostAnalysis/export_final_load_force_split2_tables.py
+```
+
+Generate polished final-load contact-network figures:
+
+```bash
+/home/yfjin/Research/anaconda3/envs/graph_analysis/bin/python \
+  AnalysisScripts/ManuscriptVisualization/plot_final_load_force_contacts.py
+```
+
+Figures are written under `AnalysisResults/final_load/Visualization/`,
+overwriting matching outputs. Raw data and generated results remain excluded
+from Git; scripts and documentation are versioned.
 
 Submit the overnight crystal-reference graph analysis:
 
