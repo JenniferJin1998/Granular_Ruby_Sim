@@ -826,6 +826,15 @@ cluster-count-peak threshold, and the spanning threshold closest to mean degree
 For periodic samples, particle contacts and visualizations use exact x/y
 minimum-image vectors. The percolation decision itself uses the nonperiodic
 loading direction z and the physical top/bottom wall-contact labels.
+
+## Additional periodic any-cluster analysis
+
+Run `python AnalysisScripts/PostAnalysis/periodic_spanning_summary.py` after
+the periodic sweep to generate `summary/any_cluster_percolation/` in the
+periodic dataset. This preserves the original selection and adds exact and
+grid-based ANY-spanning-cluster thresholds, distributions, spanning-cluster
+counts/sizes, and local-surface-normalized loading extents. See that folder's
+README for definitions, surface-fit validation, and conditional averaging.
 """
     root.mkdir(parents=True, exist_ok=True)
     (root / "README.md").write_text(text)

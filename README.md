@@ -80,6 +80,32 @@ spanning is assessed along nonperiodic z. The workflow also retains alternate
 paper-motivated indicators such as the diameter peak, cluster-count peak,
 degree near two, and exact widest-path threshold.
 
+The periodic supplement in `summary/any_cluster_percolation/` additionally
+selects the last threshold with ANY bottom-to-top spanning cluster, including
+the exact widest-path value. It provides spanning probabilities, cluster counts
+and sizes, and loading extents normalized by reconstructed local physical
+bottom/top surfaces rather than the global z bounding range. The original
+largest-cluster selection is preserved. Figures are PNG and SVG; definitions
+and validation are in `AnalysisScripts/PostAnalysis/periodic_spanning_summary.md`.
+The figure-by-figure explanation is in
+`AnalysisScripts/PostAnalysis/periodic_spanning_figure_guide.md`, also copied to
+the supplement as `FIGURE_GUIDE.md`.
+
+Periodic `4_ordered_structure_detection/method_1_feature_similarity/` screens
+particle contact environments against bulk SC/BCC/FCC/HCP feature prototypes.
+It saves scaled cosine and RMS distance rankings, feature-model sensitivity,
+spatial candidate components, and two-hop neighborhood inspections. These are
+exploratory rankings, not calibrated crystal-phase assignments. Run
+`python AnalysisScripts/PostAnalysis/ordered_structure_method1.py`; see the
+adjacent `.md` method description for feature scaling and limitations.
+
+Force-split-2 cluster shape diagnostics separate elongation, flatness, and
+bounded linearity/planarity/sphericity using saved gyration eigenvalues. Run
+`python AnalysisScripts/PostAnalysis/force_cluster_shape_diagnostics.py` to
+generate PNG/SVG comparisons and tables under `connected_force_clusters/shape_diagnostics/`.
+See `AnalysisScripts/PostAnalysis/force_cluster_shape_diagnostics.md` for
+definitions and treatment of small or degenerate clusters.
+
 The final-load property-distribution sweep uses a different fixed reference:
 `normal_force >= n * pooled_0deg_particle_particle_mean_normal_force`, with
 `n=0, 0.025, ..., 4`. Wall nodes and contacts are excluded throughout, including
@@ -126,6 +152,13 @@ summary job:
 
 ```bash
 bash AnalysisScripts/jobs/submit_force_threshold_percolation.sh
+```
+
+Generate the periodic any-cluster supplement after the sweep completes:
+
+```bash
+/home/yfjin/Research/anaconda3/envs/graph_analysis/bin/python \
+  AnalysisScripts/PostAnalysis/periodic_spanning_summary.py
 ```
 
 Run the final-load particle-only property sweep and all comparison plots:
