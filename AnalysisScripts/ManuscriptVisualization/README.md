@@ -107,3 +107,41 @@ To add only the cylinder versions without rerendering existing figures:
 This adds 40 figures (120 files: PDF, PNG, and SVG) and writes a separate
 `selection_and_render_manifest__perspective_3d_cylinder.json`, preserving the
 original views and their manifest. A full default run exports all four views.
+
+## Final-load betweenness r-z bin plots
+
+```bash
+/home/yfjin/Research/anaconda3/envs/graph_analysis/bin/python \
+  AnalysisScripts/ManuscriptVisualization/plot_final_load_betweenness_rz_bins.py
+```
+
+Reproduces the r-z bin plots from `PostAnalysis/PresentationFigurePlots.ipynb`
+(section 2.4.8) for node `betweenness` only. Particles from all 20 `core` graphs of
+an orientation are pooled; r is measured from their mean position and z from the
+lowest particle (axis inverted, top of specimen at 0). Cells are 13 r x 10 z bins
+of the bin mean. Non-zero angles use dual-slope inclined cells, slope tan(angle),
+with a split at r = 3.75e-4 m, giving the V shape. Coolwarm uses a shared
+0.005-0.045 color scale. Values outside it take the endpoint colors, and the
+colorbar has extensions at both ends. Empty bins are white.
+
+Scale and placement are identical in every output, so specimen sizes compare
+directly: 1 mm of r or z is always 3.5 in (equal aspect). All panels use the same
+frame: the largest r extent and largest specimen height over all angles, plus a
+0.04 mm margin. Each specimen is centered vertically in that frame. Figures use a
+fixed canvas (no tight cropping), so centering is identical between files. With
+axes, ticks are drawn only over the specimen's own extent.
+
+Output layout (PDF, editable-text SVG, 1200 dpi PNG):
+
+```text
+AnalysisResults/final_load/Visualization/betweenness_rz_bins/
+  render_manifest.json
+  with_axes/       one figure per angle, frame + ticks + colorbar
+  no_axes/         one figure per angle, no frame or ticks, colorbar kept
+  all_angles_row/  all angles in one row, one shared colorbar (with_axes, no_axes)
+```
+
+The manifest records the input SHA-256, binning, layout scale, per-bin ranges and
+clipped-bin counts. The script frees the graph pickle before rendering, so peak
+memory is about 2 GB. Useful options: `--angles 0deg 30deg`, `--cmap`, `--vmin`,
+`--vmax`, `--graph-view`, `--formats`, `--dpi`, `--output-root`.
