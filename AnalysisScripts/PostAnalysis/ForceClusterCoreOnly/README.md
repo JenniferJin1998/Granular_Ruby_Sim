@@ -14,6 +14,8 @@ P=/home/yfjin/Research/anaconda3/envs/graph_analysis/bin/python
 $P 01_betweenness_vs_hydrostatic_stress.py
 $P 02_global_betweenness_rank.py      # --bin-percent 10 for coarser bins
 $P 03_local_betweenness_rank.py
+$P 04_spatial_comparison.py         # --layers, --top-percent
+$P 05_correlation.py                # about 6 min (edge betweenness)
 ```
 
 Step 00 stops if the workbook labels, betweenness, or contacts disagree with

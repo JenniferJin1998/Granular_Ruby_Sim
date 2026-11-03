@@ -5,7 +5,8 @@ Run with a Python that has openpyxl (the base Anaconda install; the
 graph_analysis environment lacks it). Later steps read only these CSVs.
 
 particles.csv: workbook nodes sheet (labels, betweenness) joined with
-  stress_hydro from the workbook's own source, force_split2 node_features.csv
+  stress_hydro and particle center x, y, z (m) from the workbook's own source,
+  force_split2 node_features.csv
   (particle rows only). Betweenness is checked to be identical in both files.
 contacts.csv:  workbook edges sheet (particle-particle contacts only).
 """
@@ -29,7 +30,8 @@ def main():
     if not ((nodes.group == "high_force") == (nodes.high_force_degree > 0)).all():
         raise ValueError("Workbook group does not match high_force_degree > 0")
 
-    features = pd.read_csv(NODE_FEATURES, usecols=KEYS + ["is_wall", "betweenness", "stress_hydro"])
+    features = pd.read_csv(NODE_FEATURES, usecols=KEYS + ["is_wall", "betweenness", "stress_hydro",
+                                                          "x", "y", "z"])
     features = features[~features.is_wall.astype(bool)].drop(columns="is_wall")
     particles = nodes.merge(features, on=KEYS, how="left", validate="one_to_one",
                             suffixes=("", "_node_features"))
