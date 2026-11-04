@@ -16,6 +16,8 @@ $P 02_global_betweenness_rank.py      # --bin-percent 10 for coarser bins
 $P 03_local_betweenness_rank.py
 $P 04_spatial_comparison.py         # --layers, --top-percent
 $P 05_correlation.py                # about 6 min (edge betweenness)
+# 06 needs scikit-learn: gnn_granular env; about 11 min with 8 CPUs
+sbatch ../../jobs/run_core_only_feature_embedding.slurm
 ```
 
 Step 00 stops if the workbook labels, betweenness, or contacts disagree with
