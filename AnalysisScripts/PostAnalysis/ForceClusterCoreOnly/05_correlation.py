@@ -14,6 +14,15 @@ both variables (z_eff = boundary-following height, as in the r-z maps; contacts 
 their midpoints) and correlate the residuals (a partial rank correlation; for the
 label it is a partial point-biserial correlation, so its null is 0, not 0.5).
 Trend with angle: least-squares slope of the per-system values on angle.
+
+Dataset differences (BC_DATASET, see core_only_common.py):
+  stress datasets: the particle measure uses compressive hydrostatic stress (-stress_hydro,
+      larger = more compressed) instead of contact force, and there is no contact measure;
+      unlabeled particles (no stress) stay in the graph but are left out of the measures.
+  location control: final load r and z_eff (cubic surface); experiment r and height (cubic
+      surface in their ranks); periodic boundaries height only (cubic in its rank; x, y periodic).
+  Mann-Whitney / Spearman p-values are reported per system (useful for the single-sample
+      experiment; particles are not independent, so treat them as descriptive).
 """
 
 from __future__ import annotations
@@ -33,8 +42,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from core_only_common import (CONTACTS_CSV, OUTPUT_ROOT, PARTICLES_CSV, WORKBOOK, angle_key,
-                              load_contacts, load_particles, mean_ci, sorted_angles, summarize)
+from core_only_common import (CONTACTS_CSV, DATASET, DATASET_NAME, IS_STRESS, OUTPUT_ROOT, PARTICLES_CSV,
+                              angle_key, force_threshold, load_contacts, load_particles, mean_ci,
+                              sorted_angles, summarize)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ManuscriptVisualization"))
 from plot_final_load_betweenness_rz_bins import SPLIT_R, z_eff_from_rz  # noqa: E402
@@ -50,18 +60,29 @@ PARTIAL = {
     "partial_label": ("Label, location-controlled", "Partial point-biserial correlation"),
     "partial_contact": ("Contact, location-controlled", "Partial rank correlation"),
 }
+if IS_STRESS:
+    MEASURES["rho_particle"] = ("Particle: betweenness vs compressive stress (-hydrostatic)", "Spearman rho", 0.0)
+    del MEASURES["rho_contact"], PARTIAL["partial_contact"]
+LOCATION = DATASET["location"]
 
 
 def location(points, center, z_min, angle):
+    """(radial, height) location; radial is None for periodic boundaries (height only)."""
     shifted = points - center
     r = np.hypot(shifted[:, 0], shifted[:, 1])
     z = shifted[:, 2] - z_min
-    return r, z_eff_from_rz(r, z, math.tan(math.radians(angle_key(angle))), SPLIT_R)
+    if LOCATION == "sim_zeff":
+        return r, z_eff_from_rz(r, z, math.tan(math.radians(angle_key(angle))), SPLIT_R)
+    if LOCATION == "r_z":
+        return r, z
+    return None, z
 
 
 def cubic_design(r, z_eff):
-    u = pd.Series(r).rank(pct=True).to_numpy()
     v = pd.Series(z_eff).rank(pct=True).to_numpy()
+    if r is None:
+        return np.column_stack([v ** j for j in range(4)])
+    u = pd.Series(r).rank(pct=True).to_numpy()
     return np.column_stack([u ** i * v ** j for i in range(4) for j in range(4 - i)])
 
 
@@ -94,9 +115,10 @@ def system_measures(particles, contacts, threshold):
         incident = pd.concat([edges[["edge_u", "normal_force"]].rename(columns={"edge_u": "node_id"}),
                               edges[["edge_v", "normal_force"]].rename(columns={"edge_v": "node_id"})])
         sub["max_contact_force"] = incident.groupby("node_id").normal_force.max().reindex(sub.index)
-        is_high = (sub.group == "high_force").to_numpy()
-        if not np.array_equal(is_high, (sub.max_contact_force >= threshold).to_numpy()):
-            raise ValueError(f"{angle} sim {sim}: labels differ from max contact force >= threshold")
+        if not IS_STRESS:
+            is_high_all = (sub.group == "high_force").to_numpy()
+            if not np.array_equal(is_high_all, (sub.max_contact_force >= threshold).to_numpy()):
+                raise ValueError(f"{angle} sim {sim}: labels differ from max contact force >= threshold")
 
         positions = sub[["x", "y", "z"]].to_numpy(float)
         center = positions.mean(axis=0)
@@ -105,24 +127,35 @@ def system_measures(particles, contacts, threshold):
         midpoints = 0.5 * (sub.loc[edges.edge_u, ["x", "y", "z"]].to_numpy(float)
                            + sub.loc[edges.edge_v, ["x", "y", "z"]].to_numpy(float))
         r_e, zeff_e = location(midpoints, center, z_min, angle)
-        edges["midpoint_r"], edges["midpoint_z_eff"] = r_e, zeff_e
+        edges["midpoint_r"] = np.nan if r_e is None else r_e
+        edges["midpoint_z_eff"] = zeff_e
 
-        connected = sub.max_contact_force.notna().to_numpy()
-        b = sub.betweenness.to_numpy(float)
-        design_p = cubic_design(r_p, zeff_p)
-        auc = stats.mannwhitneyu(b[is_high], b[~is_high]).statistic / (is_high.sum() * (~is_high).sum())
-        rows.append({
-            "angle": angle, "sim_idx": sim, "particles": len(sub), "contacts": len(edges),
+        labeled = sub.group.isin(["high_force", "non_high_force"]).to_numpy()
+        lab = sub[labeled]
+        is_high = (lab.group == "high_force").to_numpy()
+        b = lab.betweenness.to_numpy(float)
+        design_p = cubic_design(None if r_p is None else r_p[labeled], zeff_p[labeled])
+        if IS_STRESS:  # compressive stress, larger = more compressed; all labeled particles
+            score = -lab.stress_hydro.to_numpy(float)
+            usable = np.ones(len(lab), bool)
+        else:  # largest particle-particle contact force; particles with contacts
+            score = lab.max_contact_force.to_numpy(float)
+            usable = np.isfinite(score)
+        test = stats.mannwhitneyu(b[is_high], b[~is_high])
+        rho = stats.spearmanr(b[usable], score[usable])
+        row = {
+            "angle": angle, "sim_idx": sim, "particles": len(lab), "contacts": len(edges),
             "high_force_particles": int(is_high.sum()),
-            "rho_particle": stats.spearmanr(b[connected], sub.max_contact_force[connected]).statistic,
-            "auc_label": auc,
-            "rho_contact": stats.spearmanr(edges.edge_betweenness, edges.normal_force).statistic,
-            "partial_particle": partial_corr(ranks(b[connected]), ranks(sub.max_contact_force[connected]),
-                                             design_p[connected]),
+            "rho_particle": rho.statistic, "rho_particle_p": rho.pvalue,
+            "auc_label": test.statistic / (is_high.sum() * (~is_high).sum()), "auc_label_p": test.pvalue,
+            "partial_particle": partial_corr(ranks(b[usable]), ranks(score[usable]), design_p[usable]),
             "partial_label": partial_corr(ranks(b), is_high.astype(float), design_p),
-            "partial_contact": partial_corr(ranks(edges.edge_betweenness), ranks(edges.normal_force),
-                                            cubic_design(r_e, zeff_e)),
-        })
+        }
+        if not IS_STRESS:
+            row["rho_contact"] = stats.spearmanr(edges.edge_betweenness, edges.normal_force).statistic
+            row["partial_contact"] = partial_corr(ranks(edges.edge_betweenness), ranks(edges.normal_force),
+                                                  cubic_design(r_e, zeff_e))
+        rows.append(row)
         edge_tables.append(edges)
     return pd.DataFrame(rows), pd.concat(edge_tables, ignore_index=True)
 
@@ -131,6 +164,10 @@ def trend_tests(systems, columns):
     rows = []
     x = systems.angle.map(angle_key).to_numpy(float)
     for column in columns:
+        if len(np.unique(x)) < 2 or len(x) < 3:  # e.g. one experiment sample per angle
+            rows.append({"measure": column, "slope_per_15deg": np.nan, "slope_ci_low": np.nan,
+                         "slope_ci_high": np.nan, "p_value": np.nan, "systems": len(x)})
+            continue
         fit = stats.linregress(x, systems[column].to_numpy(float))
         half = stats.t.ppf(0.975, len(x) - 2) * fit.stderr
         rows.append({"measure": column, "slope_per_15deg": 15 * fit.slope,
@@ -144,7 +181,8 @@ def plot(systems, trends, angles, path):
     trend = trends.set_index("measure")
     rng = np.random.default_rng(0)
     x = np.arange(len(angles))
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8.4), squeeze=False)
+    n_cols = len(MEASURES)
+    fig, axes = plt.subplots(2, n_cols, figsize=(5 * n_cols, 8.4), squeeze=False)
     for row, items in enumerate(panels):
         for col, (column, (title, ylabel, null)) in enumerate(items):
             ax = axes[row, col]
@@ -160,13 +198,16 @@ def plot(systems, trends, angles, path):
                         color="#D95F02", marker="o", capsize=3, linewidth=1.6)
             ax.axhline(null, color="k", linestyle="--", linewidth=1)
             t = trend.loc[column]
-            ax.text(0.02, 0.97, f"slope {t.slope_per_15deg:+.3f} per 15° (p = {t.p_value:.1e})",
-                    transform=ax.transAxes, va="top", fontsize=8)
+            if np.isfinite(t.slope_per_15deg):
+                ax.text(0.02, 0.97, f"slope {t.slope_per_15deg:+.3f} per 15° (p = {t.p_value:.1e})",
+                        transform=ax.transAxes, va="top", fontsize=8)
             ax.set_xticks(x)
             ax.set_xticklabels(angles)
             ax.set_title(title, fontsize=10)
             ax.set_ylabel(ylabel)
-    fig.suptitle("Betweenness-force correlation per system (dots = systems; mean with 95% CI; core only)")
+    what = "stress" if IS_STRESS else "force"
+    fig.suptitle(f"Betweenness-{what} correlation per system (dots = systems; mean with 95% CI; "
+                 f"{DATASET['title']})")
     fig.tight_layout()
     fig.savefig(path, dpi=300)
     fig.savefig(path.with_suffix(".pdf"))
@@ -175,8 +216,8 @@ def plot(systems, trends, angles, path):
 
 def main():
     argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args()
-    threshold = json.loads(WORKBOOK.with_suffix(".json").read_text())["threshold"]
-    particles = load_particles()
+    threshold = None if IS_STRESS else force_threshold()
+    particles = load_particles(include_unlabeled=True)
     contacts = load_contacts()
     angles = sorted_angles(particles.angle)
     systems, edges = system_measures(particles, contacts, threshold)
@@ -194,12 +235,15 @@ def main():
     plot(systems, trends, angles, figures / "correlation_vs_angle.png")
 
     (OUT / "metadata.json").write_text(json.dumps({
-        "inputs": [str(PARTICLES_CSV), str(CONTACTS_CSV)], "threshold": threshold,
-        "checks": ["labels == largest particle-particle normal force >= threshold",
-                   "node betweenness recomputed from contacts equals stored values"],
+        "dataset": DATASET_NAME, "inputs": [str(PARTICLES_CSV), str(CONTACTS_CSV)], "threshold": threshold,
+        "checks": (["labels == largest particle-particle normal force >= threshold"] if not IS_STRESS else [])
+                  + ["node betweenness recomputed from contacts equals stored values"],
+        "particle_score": "compressive stress -stress_hydro" if IS_STRESS else "largest contact normal force",
         "measures": {k: v[0] for k, v in {**MEASURES, **{k: (t, y) for k, (t, y) in PARTIAL.items()}}.items()},
-        "location_control": "cubic surface in percentile ranks of r and z_eff (contact midpoints for "
-                            "contacts) removed from ranked variables; label kept as 0/1",
+        "location_control": {"sim_zeff": "cubic surface in percentile ranks of r and z_eff",
+                             "r_z": "cubic surface in percentile ranks of r and height",
+                             "z": "cubic polynomial in the percentile rank of height (x, y periodic)"}[LOCATION]
+                            + " (contact midpoints for contacts), removed from ranked variables; label kept as 0/1",
         "isolated_particles": "excluded from particle measures (no contact force)",
         "trend": "least-squares slope of per-system values on angle, reported per 15 degrees",
         "replicates": "systems; mean and 95% t interval over systems per angle",

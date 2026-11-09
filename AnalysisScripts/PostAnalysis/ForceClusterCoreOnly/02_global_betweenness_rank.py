@@ -61,12 +61,15 @@ def bin_label(i, bin_percent):
     return f"{i * bin_percent:g}-{(i + 1) * bin_percent:g}"
 
 
-def plot_composition(bins, angles, bin_percent, path):
+def plot_composition(bins, angles, bin_percent, path, percentile=False):
+    """percentile=True mirrors the x axis: betweenness percentile within system, 100 = highest."""
     n_bins = int(bins.rank_bin.max()) + 1
     fig, axes = plt.subplots(1, len(angles), figsize=(4.6 * len(angles), 4.4), sharey=True, squeeze=False)
     for ax, angle in zip(axes[0], angles):
         sub = bins[bins.angle == angle]
         high = sub.groupby("rank_bin").fraction_high_force.mean().reindex(range(n_bins)).to_numpy()
+        if percentile:
+            high = high[::-1]  # position j = percentile bin j*w to (j+1)*w
         ax.bar(range(n_bins), high, width=0.9, color=GROUP_COLORS["high_force"],
                label=GROUP_LABELS["high_force"])
         ax.bar(range(n_bins), 1 - high, bottom=high, width=0.9, color=GROUP_COLORS["non_high_force"],
@@ -77,27 +80,40 @@ def plot_composition(bins, angles, bin_percent, path):
         ax.set_xticks(ticks)
         ax.set_xticklabels([bin_label(t, bin_percent) for t in ticks], rotation=30)
         ax.set_title(angle)
-        ax.set_xlabel("Betweenness rank bin within system (top %)")
+        ax.set_xlabel("Betweenness percentile bin within system" if percentile
+                      else "Betweenness rank bin within system (top %)")
         ax.set_ylim(0, 1)
     axes[0, 0].set_ylabel("Fraction of particles in bin (mean over systems)")
     axes[0, -1].legend(loc="upper right", fontsize=8, framealpha=0.9)
-    fig.suptitle("Composition of betweenness rank bins (left = highest betweenness; core only)")
+    fig.suptitle("Composition of betweenness percentile bins (right = highest betweenness; core only)"
+                 if percentile else "Composition of betweenness rank bins (left = highest betweenness; core only)")
     fig.tight_layout()
     fig.savefig(path, dpi=300)
+    if percentile:
+        fig.savefig(path.with_suffix(".pdf"))
     plt.close(fig)
 
 
-def plot_enrichment(bins, topk, angles, bin_percent, path):
+def plot_enrichment(bins, topk, angles, bin_percent, path, percentile=False):
+    """percentile=True mirrors the x axis: betweenness percentile within system, 100 = highest.
+    The cumulative top k% then becomes all particles at or above percentile 100 - k."""
     colors = angle_colors(angles)
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), squeeze=False)
-    panels = ((bins, "rank_bin", "Betweenness rank bin center (top %)", "per rank bin"),
-              (topk, "top_percent", "Top k% of betweenness within system", "cumulative top k%"))
+    if percentile:
+        panels = ((bins, "rank_bin", "Betweenness percentile bin center", "per percentile bin"),
+                  (topk, "top_percent", "Betweenness percentile p (particles at or above p)",
+                   "cumulative, at or above percentile p"))
+    else:
+        panels = ((bins, "rank_bin", "Betweenness rank bin center (top %)", "per rank bin"),
+                  (topk, "top_percent", "Top k% of betweenness within system", "cumulative top k%"))
     for ax, (frame, x_column, x_label, title) in zip(axes[0], panels):
         for angle in angles:
             summary = summarize(frame[frame.angle == angle], [x_column], ["enrichment_high_force"])
             x = summary[x_column].to_numpy(dtype=float)
             if x_column == "rank_bin":
                 x = (x + 0.5) * bin_percent
+            if percentile:
+                x = 100 - x
             ax.plot(x, summary.enrichment_high_force_mean, marker="o", markersize=3,
                     color=colors[angle], label=angle)
             ax.fill_between(x, summary.enrichment_high_force_ci_low, summary.enrichment_high_force_ci_high,
@@ -110,6 +126,8 @@ def plot_enrichment(bins, topk, angles, bin_percent, path):
     fig.suptitle("Over-representation in betweenness ranks (1 = system share; band = 95% CI over systems)")
     fig.tight_layout()
     fig.savefig(path, dpi=300)
+    if percentile:
+        fig.savefig(path.with_suffix(".pdf"))
     plt.close(fig)
 
 
@@ -139,6 +157,10 @@ def main():
 
     plot_composition(bins, angles, args.bin_percent, figures / "rank_bin_composition.png")
     plot_enrichment(bins, topk, angles, args.bin_percent, figures / "rank_enrichment.png")
+    plot_composition(bins, angles, args.bin_percent, figures / "rank_bin_composition_percentile.png",
+                     percentile=True)
+    plot_enrichment(bins, topk, angles, args.bin_percent, figures / "rank_enrichment_percentile.png",
+                    percentile=True)
     (OUT / "metadata.json").write_text(json.dumps({
         "input": str(PARTICLES_CSV), "bin_percent": args.bin_percent, "rank_bin_0": "highest betweenness",
         "ties": "average rank", "enrichment": "high-force fraction / that system's high-force share",

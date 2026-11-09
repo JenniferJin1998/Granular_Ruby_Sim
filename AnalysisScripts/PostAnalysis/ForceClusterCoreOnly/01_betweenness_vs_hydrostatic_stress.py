@@ -28,14 +28,14 @@ import numpy as np
 from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 
-from core_only_common import (GROUP_COLORS, GROUP_LABELS, GROUPS, OUTPUT_ROOT, PARTICLES_CSV,
+from core_only_common import (DATASET, GROUP_COLORS, GROUP_LABELS, GROUPS, OUTPUT_ROOT, PARTICLES_CSV,
                               load_particles, sorted_angles)
 
 OUT = OUTPUT_ROOT / "01_betweenness_vs_hydrostatic_stress"
-Y_SCALE = 1e5
+Y_SCALE = DATASET["y_scale"]
 X_LABEL = "Betweenness centrality"
-Y_LABEL = r"Hydrostatic stress ($\times 10^{-5}$)"
-TITLE_SUFFIX = "(final load, force_split2, core only)"
+Y_LABEL = DATASET["y_label"]
+TITLE_SUFFIX = f"({DATASET['title']})"
 # x column, axis label, and title tag for each version.
 X_VERSIONS = {
     "": ("betweenness", X_LABEL, ""),
@@ -86,8 +86,11 @@ def plot_binned(particles, angles, x_edges, y_edges, x_column="betweenness", x_l
             if col == 0:
                 ax.set_ylabel(Y_LABEL)
     tag = f", {tag}" if tag else ""
-    fig.suptitle(f"Hydrostatic stress versus betweenness{tag}: high-force vs non-high-force {TITLE_SUFFIX}")
-    fig.subplots_adjust(left=0.06, right=0.89, bottom=0.08, top=0.9, wspace=0.08, hspace=0.18)
+    sep = "\n" if len(angles) <= 2 else " "  # narrow figures: suffix on its own line
+    fig.suptitle(f"Hydrostatic stress versus betweenness{tag}: high-force vs non-high-force{sep}{TITLE_SUFFIX}",
+                 fontsize=10 if len(angles) <= 2 else None)
+    fig.subplots_adjust(left=0.11 if len(angles) <= 2 else 0.06, right=0.89, bottom=0.08, top=0.9, wspace=0.08,
+                        hspace=0.18)
     cax = fig.add_axes((0.91, 0.15, 0.015, 0.68))
     fig.colorbar(image, cax=cax, label="Fraction of panel particles per bin (log color)")
     return fig, [float(positive.min()), float(positive.max())]
@@ -113,8 +116,11 @@ def plot_scatter(particles, angles, x_edges, y_edges, seed, x_column="betweennes
                       label=GROUP_LABELS[g]) for g in GROUPS]
     axes[0, -1].legend(handles=handles, loc="lower right", frameon=True, fontsize=9)
     tag = f", {tag}" if tag else ""
-    fig.suptitle(f"Hydrostatic stress versus betweenness{tag} {TITLE_SUFFIX}")
-    fig.subplots_adjust(left=0.06, right=0.99, bottom=0.14, top=0.84, wspace=0.08)
+    narrow = len(angles) <= 2
+    fig.suptitle(f"Hydrostatic stress versus betweenness{tag}{chr(10) if narrow else ' '}{TITLE_SUFFIX}",
+                 fontsize=10 if narrow else None)
+    fig.subplots_adjust(left=0.1 if narrow else 0.06, right=0.99, bottom=0.14, top=0.8 if narrow else 0.84,
+                        wspace=0.08)
     return fig
 
 
