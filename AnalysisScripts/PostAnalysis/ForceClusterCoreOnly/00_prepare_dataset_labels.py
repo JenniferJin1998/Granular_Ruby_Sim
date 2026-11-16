@@ -11,6 +11,11 @@ export: angle, sim_idx, node_id, group, degree, closeness, betweenness, stress_h
   periodic_force:    force_split2 node_features / edge_features (core edges only); group =
       high_force when the particle has a particle-particle contact with normal force >= the
       stored threshold (2 x pooled 0deg mean of particle-particle contacts).
+  periodic_force_top_bottom: periodic_force particles, contacts and labels; betweenness is
+      replaced by the top-bottom betweenness (top_bottom_betweenness.py: shortest paths between
+      particles touching a bottom wall, labels -1/-2/-3, and particles touching a top wall,
+      labels -4/-5, on the core graph). Kept: betweenness_all_pairs (standard value), wall_side
+      (bottom / top / none); contacts gain edge_betweenness_top_bottom.
   experiment_stress: Results/14 graphs (LoadStep2, t5 contacts, core edges); one sample per
       angle (sim_idx 0); group = high_force when stress_hydro <= sample mean - 1 SD; particles
       without stress (no FF grain) are 'unlabeled' (kept for the graph, left out of statistics).
@@ -98,6 +103,60 @@ def periodic_force():
     return nodes, contacts, info
 
 
+def periodic_force_top_bottom():
+    from top_bottom_betweenness import top_bottom_betweenness
+
+    nodes, contacts, info = periodic_force()
+    walls = pd.read_csv(PERIODIC_SPLIT / "edge_features.csv",
+                        usecols=["geometry", "sim_idx", "node1", "is_core_edge", "wall_surface"])
+    walls = walls[~walls.is_core_edge.astype(bool)].rename(columns={"geometry": "angle", "node1": "node_id"})
+    walls["node_id"] = walls.node_id.astype(int)
+    if not walls.wall_surface.isin(["bottom", "top"]).all():
+        raise ValueError("Unexpected wall_surface values")
+    side = walls.groupby(["angle", "sim_idx", "node_id"]).wall_surface.agg(lambda x: "|".join(sorted(set(x))))
+    if side.str.contains("|", regex=False).any():
+        raise ValueError("A particle touches both the bottom and the top wall")
+    key = pd.MultiIndex.from_frame(nodes[["angle", "sim_idx", "node_id"]])
+    nodes["wall_side"] = side.reindex(key).fillna("none").to_numpy()
+    nodes["betweenness_all_pairs"] = nodes.pop("betweenness")
+
+    node_values, edge_values, systems = [], [], []
+    contact_groups = dict(tuple(contacts.groupby(["angle", "sim_idx"])))
+    for (angle, sim), sub in nodes.groupby(["angle", "sim_idx"]):
+        edges = contact_groups[angle, sim]
+        adjacency = {int(v): [] for v in sub.node_id}
+        for u, v in zip(edges.edge_u.astype(int), edges.edge_v.astype(int)):
+            adjacency[u].append(v)
+            adjacency[v].append(u)
+        bottom = sub.node_id[sub.wall_side == "bottom"].astype(int).tolist()
+        top = sub.node_id[sub.wall_side == "top"].astype(int).tolist()
+        node_tb, edge_tb, connected = top_bottom_betweenness(adjacency, bottom, top)
+        node_values.append(pd.Series([node_tb[int(v)] for v in sub.node_id], index=sub.index))
+        edge_values.append(pd.Series([edge_tb.get((int(u), int(v)), 0.0) for u, v in zip(edges.edge_u, edges.edge_v)],
+                                     index=edges.index))
+        systems.append({"angle": angle, "sim_idx": int(sim), "bottom_particles": len(bottom),
+                        "top_particles": len(top), "pairs": len(bottom) * len(top), "connected_pairs": connected})
+    nodes["betweenness"] = pd.concat(node_values).reindex(nodes.index)
+    contacts["edge_betweenness_top_bottom"] = pd.concat(edge_values).reindex(contacts.index)
+    systems = pd.DataFrame(systems)
+    info.update({
+        "sources": info["sources"],
+        "betweenness": "top-bottom betweenness on the core graph (particle-particle contacts): average over "
+                       "bottom-wall x top-wall particle pairs of the share of the pair's shortest paths through "
+                       "the particle; endpoints get no credit for their own pairs; see top_bottom_betweenness.py",
+        "betweenness_all_pairs": "standard all-pairs core betweenness (folder 5 value), kept for comparison",
+        "bottom_top_sets": "particles with >= 1 contact to a bottom wall (labels -1, -2, -3) / top wall (-4, -5)",
+        "pairs_per_system": {"min": int(systems.pairs.min()), "max": int(systems.pairs.max()),
+                             "all_connected": bool((systems.pairs == systems.connected_pairs).all())},
+        "wall_particles_per_system": {
+            angle: {side: [int(g[f"{side}_particles"].min()), int(g[f"{side}_particles"].max())]
+                    for side in ("bottom", "top")} for angle, g in systems.groupby("angle")},
+    })
+    LABELS_DIR.mkdir(parents=True, exist_ok=True)
+    systems.to_csv(LABELS_DIR / "systems_wall_sets.csv", index=False)
+    return nodes, contacts, info
+
+
 def experiment_stress():
     particles, contacts = [], []
     for sample, angle in EXPERIMENT_SAMPLES.items():
@@ -130,7 +189,7 @@ def experiment_stress():
 
 def main():
     builders = {"final_load_stress": final_load_stress, "periodic_force": periodic_force,
-                "experiment_stress": experiment_stress}
+                "periodic_force_top_bottom": periodic_force_top_bottom, "experiment_stress": experiment_stress}
     if DATASET_NAME not in builders:
         raise ValueError(f"Set BC_DATASET to one of {sorted(builders)} (final_load_force uses "
                          "00_export_workbook_labels.py)")

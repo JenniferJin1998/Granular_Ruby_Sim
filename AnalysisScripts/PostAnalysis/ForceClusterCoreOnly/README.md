@@ -37,6 +37,7 @@ Steps 01, 02, 05, 07 and 09 also run on other datasets, chosen with the environm
 |---|---|---|
 | `final_load_stress` | high-stress = hydrostatic stress <= system mean - 1 SD | `final_load/04_force_cluster_analysis_core_only/10_high_stress_classification/` |
 | `periodic_force` | force cluster (particle-particle contact >= stored force_split2 threshold) | `periodic_boundaries/2026-08-03/5_betweenness_force_cluster_core_only/` (01, 02, 05 only; no radius) |
+| `periodic_force_top_bottom` | same as `periodic_force`; `betweenness` = top-bottom betweenness (`top_bottom_betweenness.py`) | `periodic_boundaries/2026-08-03/6_top_bottom_betweenness_force_cluster_core_only/` (01, 02, 05, 10) |
 | `experiment_stress` | high-stress = hydrostatic stress <= sample mean - 1 SD (Results/14 graphs, LS2) | `Granular_RubyExp_202608/Results/18_BetweennessHighStress/` |
 
 ```bash
@@ -56,3 +57,19 @@ table and figure is relabeled `high_stress` / "High-stress" (`core_only_common._
 Step 05 differs by dataset: stress datasets correlate betweenness with compressive stress
 (-stress_hydro) and have no contact measure; location control is r and z_eff (final load),
 r and height (experiment), height only (periodic).
+
+## Top-bottom betweenness (`BC_DATASET=periodic_force_top_bottom`)
+
+`top_bottom_betweenness.py` counts only shortest paths from particles touching a bottom wall to particles
+touching a top wall (core graph), normalized by the number of such pairs. Node and edge versions are
+checked against brute-force enumeration by running the file directly. Step 00 stores it as `betweenness` (the
+all-pairs value is kept as `betweenness_all_pairs`), so steps 01, 02 and 05 run unchanged. Step 05 recomputes it
+from the contacts. `10_simulation_mean_comparison.py` (this dataset only) compares simulation means and medians
+by group and angle (paired / Welch / Mann-Whitney, as in the other property comparisons). It also compares
+the per-system separation measures with the all-pairs results of `periodic_force` (run that first).
+
+```bash
+export BC_DATASET=periodic_force_top_bottom
+$P 00_prepare_dataset_labels.py && $P 01_betweenness_vs_hydrostatic_stress.py && $P 02_global_betweenness_rank.py
+$P 05_correlation.py && $P 10_simulation_mean_comparison.py      # about 5 min in total
+```

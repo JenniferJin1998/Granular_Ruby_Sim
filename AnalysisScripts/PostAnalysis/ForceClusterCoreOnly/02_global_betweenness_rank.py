@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from core_only_common import (GROUP_COLORS, GROUP_LABELS, GROUPS, OUTPUT_ROOT, PARTICLES_CSV,
+from core_only_common import (B_NAME, GROUP_COLORS, GROUP_LABELS, GROUPS, OUTPUT_ROOT, PARTICLES_CSV,
                               angle_colors, load_particles, sorted_angles, summarize)
 
 OUT = OUTPUT_ROOT / "02_global_betweenness_rank"
@@ -80,13 +80,13 @@ def plot_composition(bins, angles, bin_percent, path, percentile=False):
         ax.set_xticks(ticks)
         ax.set_xticklabels([bin_label(t, bin_percent) for t in ticks], rotation=30)
         ax.set_title(angle)
-        ax.set_xlabel("Betweenness percentile bin within system" if percentile
-                      else "Betweenness rank bin within system (top %)")
+        ax.set_xlabel(f"{B_NAME.capitalize()} percentile bin within system" if percentile
+                      else f"{B_NAME.capitalize()} rank bin within system (top %)")
         ax.set_ylim(0, 1)
     axes[0, 0].set_ylabel("Fraction of particles in bin (mean over systems)")
     axes[0, -1].legend(loc="upper right", fontsize=8, framealpha=0.9)
-    fig.suptitle("Composition of betweenness percentile bins (right = highest betweenness; core only)"
-                 if percentile else "Composition of betweenness rank bins (left = highest betweenness; core only)")
+    fig.suptitle(f"Composition of {B_NAME} percentile bins (right = highest; core only)"
+                 if percentile else f"Composition of {B_NAME} rank bins (left = highest; core only)")
     fig.tight_layout()
     fig.savefig(path, dpi=300)
     if percentile:
@@ -100,12 +100,12 @@ def plot_enrichment(bins, topk, angles, bin_percent, path, percentile=False):
     colors = angle_colors(angles)
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), squeeze=False)
     if percentile:
-        panels = ((bins, "rank_bin", "Betweenness percentile bin center", "per percentile bin"),
-                  (topk, "top_percent", "Betweenness percentile p (particles at or above p)",
+        panels = ((bins, "rank_bin", f"{B_NAME.capitalize()} percentile bin center", "per percentile bin"),
+                  (topk, "top_percent", f"{B_NAME.capitalize()} percentile p (particles at or above p)",
                    "cumulative, at or above percentile p"))
     else:
-        panels = ((bins, "rank_bin", "Betweenness rank bin center (top %)", "per rank bin"),
-                  (topk, "top_percent", "Top k% of betweenness within system", "cumulative top k%"))
+        panels = ((bins, "rank_bin", f"{B_NAME.capitalize()} rank bin center (top %)", "per rank bin"),
+                  (topk, "top_percent", f"Top k% of {B_NAME} within system", "cumulative top k%"))
     for ax, (frame, x_column, x_label, title) in zip(axes[0], panels):
         for angle in angles:
             summary = summarize(frame[frame.angle == angle], [x_column], ["enrichment_high_force"])
@@ -123,7 +123,7 @@ def plot_enrichment(bins, topk, angles, bin_percent, path, percentile=False):
         ax.set_xlabel(x_label)
         ax.set_ylabel("Enrichment (fraction / system share)")
     axes[0, 0].legend(title="Angle", fontsize=8)
-    fig.suptitle("Over-representation in betweenness ranks (1 = system share; band = 95% CI over systems)")
+    fig.suptitle(f"Over-representation in {B_NAME} ranks (1 = system share; band = 95% CI over systems)")
     fig.tight_layout()
     fig.savefig(path, dpi=300)
     if percentile:

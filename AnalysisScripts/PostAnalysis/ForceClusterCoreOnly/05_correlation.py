@@ -42,12 +42,13 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from core_only_common import (CONTACTS_CSV, DATASET, DATASET_NAME, IS_STRESS, OUTPUT_ROOT, PARTICLES_CSV,
+from core_only_common import (B_NAME, CONTACTS_CSV, DATASET, DATASET_NAME, IS_STRESS, IS_TOP_BOTTOM, OUTPUT_ROOT, PARTICLES_CSV,
                               angle_key, force_threshold, load_contacts, load_particles, mean_ci,
                               sorted_angles, summarize)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ManuscriptVisualization"))
 from plot_final_load_betweenness_rz_bins import SPLIT_R, z_eff_from_rz  # noqa: E402
+from top_bottom_betweenness import top_bottom_betweenness  # noqa: E402
 
 OUT = OUTPUT_ROOT / "05_correlation"
 MEASURES = {
@@ -63,6 +64,8 @@ PARTIAL = {
 if IS_STRESS:
     MEASURES["rho_particle"] = ("Particle: betweenness vs compressive stress (-hydrostatic)", "Spearman rho", 0.0)
     del MEASURES["rho_contact"], PARTIAL["partial_contact"]
+if IS_TOP_BOTTOM:
+    MEASURES = {k: (t.replace("betweenness", B_NAME), y, n) for k, (t, y, n) in MEASURES.items()}
 LOCATION = DATASET["location"]
 
 
@@ -105,11 +108,17 @@ def system_measures(particles, contacts, threshold):
         graph = nx.Graph()
         graph.add_nodes_from(sub.index)
         graph.add_edges_from(zip(edges.edge_u, edges.edge_v))
-        recomputed = nx.betweenness_centrality(graph, normalized=True)
+        if IS_TOP_BOTTOM:  # bottom-wall to top-wall shortest paths only
+            recomputed, edge_b, _ = top_bottom_betweenness(
+                {v: list(graph[v]) for v in graph}, sub.index[sub.wall_side == "bottom"],
+                sub.index[sub.wall_side == "top"])
+        else:
+            recomputed = nx.betweenness_centrality(graph, normalized=True)
         if not np.allclose([recomputed[n] for n in sub.index], sub.betweenness, rtol=1e-9, atol=1e-12):
             raise ValueError(f"{angle} sim {sim}: betweenness from contacts differs from stored values")
-        edge_b = nx.edge_betweenness_centrality(graph, normalized=True)
-        edges["edge_betweenness"] = [edge_b.get((u, v), edge_b.get((v, u))) for u, v in
+        if not IS_TOP_BOTTOM:
+            edge_b = nx.edge_betweenness_centrality(graph, normalized=True)
+        edges["edge_betweenness"] = [edge_b.get((u, v), edge_b.get((v, u), 0.0)) for u, v in
                                      zip(edges.edge_u, edges.edge_v)]
 
         incident = pd.concat([edges[["edge_u", "normal_force"]].rename(columns={"edge_u": "node_id"}),
@@ -206,7 +215,7 @@ def plot(systems, trends, angles, path):
             ax.set_title(title, fontsize=10)
             ax.set_ylabel(ylabel)
     what = "stress" if IS_STRESS else "force"
-    fig.suptitle(f"Betweenness-{what} correlation per system (dots = systems; mean with 95% CI; "
+    fig.suptitle(f"{B_NAME.capitalize()}-{what} correlation per system (dots = systems; mean with 95% CI; "
                  f"{DATASET['title']})")
     fig.tight_layout()
     fig.savefig(path, dpi=300)
@@ -237,7 +246,9 @@ def main():
     (OUT / "metadata.json").write_text(json.dumps({
         "dataset": DATASET_NAME, "inputs": [str(PARTICLES_CSV), str(CONTACTS_CSV)], "threshold": threshold,
         "checks": (["labels == largest particle-particle normal force >= threshold"] if not IS_STRESS else [])
-                  + ["node betweenness recomputed from contacts equals stored values"],
+                  + [f"node {B_NAME} recomputed from contacts equals stored values"],
+        "betweenness": ("top-bottom: bottom-wall x top-wall particle pairs only (top_bottom_betweenness.py); "
+                        "edge betweenness uses the same pairs" if IS_TOP_BOTTOM else "all pairs"),
         "particle_score": "compressive stress -stress_hydro" if IS_STRESS else "largest contact normal force",
         "measures": {k: v[0] for k, v in {**MEASURES, **{k: (t, y) for k, (t, y) in PARTIAL.items()}}.items()},
         "location_control": {"sim_zeff": "cubic surface in percentile ranks of r and z_eff",

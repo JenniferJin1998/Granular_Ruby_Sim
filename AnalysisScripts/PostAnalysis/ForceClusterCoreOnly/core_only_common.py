@@ -10,6 +10,10 @@ The dataset is chosen with the environment variable BC_DATASET (default final_lo
                      at or below (more compressive than) its system's mean - 1 SD.
   periodic_force     periodic boundaries (2026-08-03), force_split2: high-force = at least one
                      particle-particle contact with normal force >= the stored threshold.
+  periodic_force_top_bottom  same particles and labels as periodic_force, but the column
+                     betweenness holds the top-bottom betweenness (shortest paths between bottom-wall
+                     and top-wall particles only; top_bottom_betweenness.py); the all-pairs value is
+                     kept as betweenness_all_pairs.
   experiment_stress  experiment LoadStep2 graphs (Results/14), one sample per angle;
                      high-stress = hydrostatic stress <= that sample's mean - 1 SD.
 
@@ -60,6 +64,12 @@ DATASETS = {
         "kind": "force", "title": "periodic boundaries, force_split2, core only", "y_scale": 1e10,
         "y_label": r"Hydrostatic stress ($\times 10^{-10}$)", "location": "z", "radial": False,
     },
+    "periodic_force_top_bottom": {
+        "output_root": PERIODIC_CASE / "6_top_bottom_betweenness_force_cluster_core_only", "labels_dir": "00_labels",
+        "kind": "force", "title": "periodic boundaries, force_split2, top-bottom betweenness, core only",
+        "y_scale": 1e10, "y_label": r"Hydrostatic stress ($\times 10^{-10}$)", "location": "z", "radial": False,
+        "betweenness": "top_bottom",
+    },
     "experiment_stress": {
         "output_root": EXPERIMENT_RESULTS / "18_BetweennessHighStress", "labels_dir": "00_labels",
         "kind": "stress", "title": "experiment LS2, high-stress = mean - 1 SD per sample, core only",
@@ -71,6 +81,9 @@ if DATASET_NAME not in DATASETS:
     raise ValueError(f"BC_DATASET must be one of {sorted(DATASETS)}, got {DATASET_NAME!r}")
 DATASET = DATASETS[DATASET_NAME]
 IS_STRESS = DATASET["kind"] == "stress"
+IS_TOP_BOTTOM = DATASET.get("betweenness") == "top_bottom"
+B_NAME = "top-bottom betweenness" if IS_TOP_BOTTOM else "betweenness"  # for figure text
+B_LABEL = "Top-bottom betweenness" if IS_TOP_BOTTOM else "Betweenness centrality"
 
 OUTPUT_ROOT = DATASET["output_root"]
 LABELS_DIR = OUTPUT_ROOT / DATASET["labels_dir"]
